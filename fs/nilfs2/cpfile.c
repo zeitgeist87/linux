@@ -28,6 +28,7 @@
 #include <linux/nilfs2_fs.h>
 #include "mdt.h"
 #include "cpfile.h"
+#include "sufile.h"
 
 
 static inline unsigned long
@@ -703,6 +704,7 @@ static int nilfs_cpfile_clear_snapshot(struct inode *cpfile, __u64 cno)
 	struct nilfs_cpfile_header *header;
 	struct nilfs_checkpoint *cp;
 	struct nilfs_snapshot_list *list;
+	struct the_nilfs *nilfs = cpfile->i_sb->s_fs_info;
 	__u64 next, prev;
 	void *kaddr;
 	int ret;
@@ -785,6 +787,8 @@ static int nilfs_cpfile_clear_snapshot(struct inode *cpfile, __u64 cno)
 	nilfs_mdt_mark_dirty(cpfile);
 
 	brelse(prev_bh);
+
+	nilfs_sufile_zero_nblocks(nilfs->ns_sufile);
 
  out_next:
 	brelse(next_bh);
