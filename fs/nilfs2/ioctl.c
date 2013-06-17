@@ -462,6 +462,98 @@ static int nilfs_ioctl_move_blocks(struct super_block *sb,
 	return ret;
 }
 
+static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp, void __user *argp)
+{
+	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
+	__u64 end, offset, blocknr, range[2];
+	int ret;
+	struct buffer_head *bh, *n;
+	LIST_HEAD(buffers);
+	struct nilfs_transaction_info ti;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (copy_from_user(range, argp, sizeof(__u64[2])))
+		return -EFAULT;
+
+	offset = range[0];
+
+	/* check if fs is writeable */
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
+
+	/* cleaner shouldn't be running while moving blocks */
+	if (test_and_set_bit(THE_NILFS_GC_RUNNING, &nilfs->ns_flags)) {
+		ret = -EBUSY;
+		goto out;
+	}
+
+	ret = nilfs_transaction_begin(inode->i_sb, &ti, 1);
+	if (unlikely(ret))
+		goto out_gc;
+
+	/* dat shouldn't change while reading physical blocks */
+	down_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
+	ret = nilfs_bmap_lookup_contig(NILFS_I(inode)->i_bmap, offset, &blocknr, range[1]);
+	if (ret < 0)
+		goto failed;
+
+	for (end = offset + ret; offset < end; offset++){
+		ret = nilfs_gccache_submit_read_data(
+				inode, offset, blocknr, 0, &bh);
+		if (unlikely(ret < 0))
+			goto failed;
+
+		if (unlikely(!list_empty(&bh->b_assoc_buffers))) {
+			printk(KERN_CRIT "%s: conflicting data buffer: ino=%llu, "
+			"offset=%llu, blocknr=%llu\n", __func__,
+					(unsigned long long) inode->i_ino,
+					(unsigned long long) offset, (unsigned long long) blocknr);
+			brelse(bh);
+			ret = -EEXIST;
+			goto failed;
+		}
+
+		list_add_tail(&bh->b_assoc_buffers, &buffers);
+		blocknr++;
+	}
+
+	list_for_each_entry_safe(bh, n, &buffers, b_assoc_buffers) {
+		ret = nilfs_gccache_wait_and_mark_dirty(bh);
+		/* -EEXIST means it is already marked dirty */
+		if (ret == -EEXIST)
+			ret = 0;
+		if (unlikely(ret < 0))
+			goto failed;
+
+		list_del_init(&bh->b_assoc_buffers);
+		brelse(bh);
+	}
+
+	nilfs_set_file_dirty(inode, 1 << (PAGE_SHIFT - inode->i_blkbits));
+
+
+	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
+	nilfs_transaction_commit(inode->i_sb);
+  out_gc:
+	clear_nilfs_gc_running(nilfs);
+  out:
+  	mnt_drop_write_file(filp);
+	return ret;
+  failed:
+	list_for_each_entry_safe(bh, n, &buffers, b_assoc_buffers) {
+		list_del_init(&bh->b_assoc_buffers);
+		brelse(bh);
+	}
+	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
+	nilfs_transaction_abort(inode->i_sb);
+	clear_nilfs_gc_running(nilfs);
+	mnt_drop_write_file(filp);
+	return ret;
+}
+
 static int nilfs_ioctl_delete_checkpoints(struct the_nilfs *nilfs,
 					  struct nilfs_argv *argv, void *buf)
 {
@@ -836,6 +928,8 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_resize(inode, filp, argp);
 	case NILFS_IOCTL_SET_ALLOC_RANGE:
 		return nilfs_ioctl_set_alloc_range(inode, argp);
+	case NILFS_IOCTL_MARK_EXTENT_DIRTY:
+		return nilfs_ioctl_mark_extent_dirty(inode, filp, argp);
 	default:
 		return -ENOTTY;
 	}
@@ -866,6 +960,7 @@ long nilfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case NILFS_IOCTL_SYNC:
 	case NILFS_IOCTL_RESIZE:
 	case NILFS_IOCTL_SET_ALLOC_RANGE:
+	case NILFS_IOCTL_MARK_EXTENT_DIRTY:
 		break;
 	default:
 		return -ENOIOCTLCMD;
