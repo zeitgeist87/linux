@@ -260,6 +260,65 @@ int nilfs_mdt_get_block(struct inode *inode, unsigned long blkoff, int create,
 	return ret;
 }
 
+static int
+nilfs_mdt_submit_block_nolookup(struct inode *inode, unsigned long blkoff, struct buffer_head **out_bh)
+{
+	struct buffer_head *bh;
+	int ret = -ENOMEM;
+
+	bh = nilfs_grab_buffer(inode, inode->i_mapping, blkoff, 0);
+	if (unlikely(!bh))
+		goto failed;
+
+	ret = -EEXIST; /* internal code */
+	if (buffer_uptodate(bh)){
+		goto out;
+	} else {
+		ret = -EIO;
+		goto failed_bh;
+	}
+
+ out:
+	get_bh(bh);
+	*out_bh = bh;
+
+ failed_bh:
+	unlock_page(bh->b_page);
+	page_cache_release(bh->b_page);
+	brelse(bh);
+ failed:
+	return ret;
+}
+
+/**
+ * nilfs_mdt_get_block_from_cache - read a cached buffer on meta data file.
+ * @inode: inode of the meta data file
+ * @blkoff: block offset
+ * @out_bh: output of a pointer to the buffer_head
+ *
+ * nilfs_mdt_get_block() looks up the specified buffer. On success, the returned buffer is
+ * assured to be either existing or formatted using a buffer lock on success.
+ * @out_bh is substituted only when zero is returned.
+ *
+ * Return Value: On success, it returns 0. On error, the following negative
+ * error code is returned.
+ *
+ * %-ENOMEM - Insufficient memory available.
+ *
+ * %-EIO - I/O error
+ *
+ */
+int nilfs_mdt_get_block_from_cache(struct inode *inode, unsigned long blkoff,
+			struct buffer_head **out_bh)
+{
+	int ret;
+	ret = nilfs_mdt_submit_block_nolookup(inode, blkoff, out_bh);
+	if (ret == -EEXIST)
+		return 0;
+
+	return ret;
+}
+
 /**
  * nilfs_mdt_delete_block - make a hole on the meta data file.
  * @inode: inode of the meta data file

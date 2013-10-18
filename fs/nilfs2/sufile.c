@@ -104,6 +104,14 @@ nilfs_sufile_get_segment_usage_block(struct inode *sufile, __u64 segnum,
 				   create, NULL, bhp);
 }
 
+static inline int
+nilfs_sufile_get_segment_usage_block_from_cache(struct inode *sufile, __u64 segnum,
+				     struct buffer_head **bhp)
+{
+	return nilfs_mdt_get_block_from_cache(sufile,
+				   nilfs_sufile_get_blkoff(sufile, segnum), bhp);
+}
+
 static int nilfs_sufile_delete_segment_usage_block(struct inode *sufile,
 						   __u64 segnum)
 {
@@ -673,10 +681,29 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum)
 	void *kaddr;
 	int ret;
 
-	down_write(&NILFS_MDT(sufile)->mi_sem);
-	ret = nilfs_sufile_get_segment_usage_block(sufile, segnum, 0, &bh);
-	if (ret < 0)
-		goto out_sem;
+
+	if(!down_write_trylock(&NILFS_MDT(sufile)->mi_sem)){
+		//possible deadlock with nilfs_sufile_resize
+		printk(KERN_CRIT "lock failed1: %llu\n", segnum);
+		ret = -1;
+		return ret;
+	}
+
+	ret = nilfs_sufile_get_segment_usage_block_from_cache(sufile, segnum, &bh);
+	if (ret < 0){
+		if(!down_read_trylock(&NILFS_I(sufile)->i_bmap->b_sem)){
+			printk(KERN_CRIT "lock failed2: %llu\n", segnum);
+			goto out_sem;
+		}
+
+		/* bmap read lock is necessary to prevent deadlock if
+		 * nilfs_sufile_get_segment_usage_block calls nilfs_bmap_lookup
+		 */
+		ret = nilfs_sufile_get_segment_usage_block(sufile, segnum, 0, &bh);
+		up_read(&NILFS_I(sufile)->i_bmap->b_sem);
+		if (ret < 0)
+			goto out_sem;
+	}
 
 	kaddr = kmap_atomic(bh->b_page);
 	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, bh, kaddr);
