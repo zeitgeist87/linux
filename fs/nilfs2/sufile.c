@@ -685,7 +685,6 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int is_su
 		//if it is sufile, there is a possible deadlock,
 		//because the locks are taken in different order
 		if(!down_write_trylock(&NILFS_MDT(sufile)->mi_sem)){
-			printk(KERN_CRIT "lock failed1: %llu\n", segnum);
 			ret = -1;
 			return ret;
 		}
