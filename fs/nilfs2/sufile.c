@@ -674,33 +674,38 @@ void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
  * @sufile: inode of segment usage file
  * @segnum: segment number
  */
-int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum)
+int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int is_sufile)
 {
 	struct buffer_head *bh;
 	struct nilfs_segment_usage *su;
 	void *kaddr;
 	int ret;
 
-
-	if(!down_write_trylock(&NILFS_MDT(sufile)->mi_sem)){
-		//possible deadlock with nilfs_sufile_resize
-		printk(KERN_CRIT "lock failed1: %llu\n", segnum);
-		ret = -1;
-		return ret;
+	if (is_sufile){
+		//if it is sufile, there is a possible deadlock,
+		//because the locks are taken in different order
+		if(!down_write_trylock(&NILFS_MDT(sufile)->mi_sem)){
+			printk(KERN_CRIT "lock failed1: %llu\n", segnum);
+			ret = -1;
+			return ret;
+		}
+	}else{
+		//lock taken in different order, but it works
+		//because bmap lock above is not the bmap lock
+		//of sufile
+		down_write(&NILFS_MDT(sufile)->mi_sem);
 	}
 
-	ret = nilfs_sufile_get_segment_usage_block_from_cache(sufile, segnum, &bh);
-	if (ret < 0){
-		if(!down_read_trylock(&NILFS_I(sufile)->i_bmap->b_sem)){
-			printk(KERN_CRIT "lock failed2: %llu\n", segnum);
+	if (is_sufile){
+		//if it is sufile, there is a possible deadlock,
+		//because the bmap lock needed to read in a block is already taken
+		ret = nilfs_sufile_get_segment_usage_block_from_cache(sufile, segnum, &bh);
+		if (ret < 0)
 			goto out_sem;
-		}
-
-		/* bmap read lock is necessary to prevent deadlock if
-		 * nilfs_sufile_get_segment_usage_block calls nilfs_bmap_lookup
-		 */
+	} else {
+		//no deadlock, because bmap lock above is not the  bmap lock
+		//of sufile
 		ret = nilfs_sufile_get_segment_usage_block(sufile, segnum, 0, &bh);
-		up_read(&NILFS_I(sufile)->i_bmap->b_sem);
 		if (ret < 0)
 			goto out_sem;
 	}
