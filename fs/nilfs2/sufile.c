@@ -556,6 +556,101 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
 	return ret;
 }
 
+static void nilfs_sufile_do_set_nblocks(struct inode *sufile, __u64 segnum, __u32 nblocks,
+			   struct buffer_head *header_bh,
+			   struct buffer_head *su_bh)
+{
+	struct nilfs_segment_usage *su;
+	void *kaddr;
+
+	kaddr = kmap_atomic(su_bh->b_page);
+	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, su_bh, kaddr);
+	if (su->su_nblocks == cpu_to_le32(nblocks) || nilfs_segment_usage_active(su)
+			|| nilfs_segment_usage_error(su)){
+		kunmap_atomic(kaddr);
+		return;
+	}
+
+	su->su_nblocks = cpu_to_le32(nblocks);
+	kunmap_atomic(kaddr);
+
+	mark_buffer_dirty(su_bh);
+	nilfs_mdt_mark_dirty(sufile);
+}
+
+/**
+ * nilfs_sufile_set_segment_nblocks - set nblocks of a segments
+ * @sufile: inode of segment usage file
+ * @segnumv: vector of segment numbers
+ * @nblocksv: vector of nblocks
+ * @nsegs: number of segments
+ */
+int nilfs_sufile_set_segment_nblocks(struct inode *sufile, __u64 *segnumv, __u32 *nblocksv, size_t nsegs)
+{
+	struct buffer_head *header_bh, *bh;
+	unsigned long blkoff, prev_blkoff;
+	__u64 *seg;
+	__u32 *nblocks;
+	size_t nerr = 0, n = 0;
+	int ret = 0;
+
+	if (unlikely(nsegs == 0))
+		goto out;
+
+	down_write(&NILFS_MDT(sufile)->mi_sem);
+	for (seg = segnumv; seg < segnumv + nsegs; seg++) {
+		if (unlikely(*seg >= nilfs_sufile_get_nsegments(sufile))) {
+			printk(KERN_WARNING
+			       "%s: invalid segment number: %llu\n", __func__,
+			       (unsigned long long)*seg);
+			nerr++;
+		}
+	}
+	if (nerr > 0) {
+		ret = -EINVAL;
+		goto out_sem;
+	}
+
+	ret = nilfs_sufile_get_header_block(sufile, &header_bh);
+	if (ret < 0)
+		goto out_sem;
+
+	seg = segnumv;
+	nblocks = nblocksv;
+	blkoff = nilfs_sufile_get_blkoff(sufile, *seg);
+	ret = nilfs_mdt_get_block(sufile, blkoff, 0, NULL, &bh);
+	if (ret < 0)
+		goto out_header;
+
+	for (;;) {
+		nilfs_sufile_do_set_nblocks(sufile, *seg, *nblocks, header_bh, bh);
+
+		if (++seg >= segnumv + nsegs)
+			break;
+		++nblocks;
+
+		prev_blkoff = blkoff;
+		blkoff = nilfs_sufile_get_blkoff(sufile, *seg);
+		if (blkoff == prev_blkoff)
+			continue;
+
+		/* get different block */
+		brelse(bh);
+		ret = nilfs_mdt_get_block(sufile, blkoff, 0, NULL, &bh);
+		if (unlikely(ret < 0))
+			goto out_header;
+	}
+	brelse(bh);
+
+ out_header:
+	n = seg - segnumv;
+	brelse(header_bh);
+ out_sem:
+	up_write(&NILFS_MDT(sufile)->mi_sem);
+ out:
+	return ret;
+}
+
 /**
  * nilfs_sufile_update_range - modify range of segment usages at a time
  * @sufile: inode of segment usage file

@@ -78,6 +78,8 @@ void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
 
 int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int is_sufile);
 
+int nilfs_sufile_set_segment_nblocks(struct inode *sufile, __u64 *, __u32 *, size_t);
+
 /**
  * nilfs_sufile_zero_nblocks - set su_nblocks to 0 for all segments
  * @sufile: inode of segment usage file

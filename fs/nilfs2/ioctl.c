@@ -774,6 +774,64 @@ out:
 	return ret;
 }
 
+static int nilfs_ioctl_set_suinfo_nblocks(struct inode *inode, struct file *filp,
+				      unsigned int cmd, void __user *argp)
+{
+	struct nilfs_argv argv[2];
+	void *kbufs[2];
+	struct the_nilfs *nilfs;
+	size_t nsegs;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
+
+	ret = -EFAULT;
+	if (copy_from_user(argv, argp, sizeof(argv)))
+		goto out;
+
+	ret = -EINVAL;
+	nsegs = argv[0].v_nmembs;
+	if (argv[0].v_size != sizeof(__u64))
+		goto out;
+	if (nsegs > UINT_MAX / sizeof(__u64))
+		goto out;
+	if (argv[1].v_size != argv[0].v_size)
+		goto out;
+
+	/*
+	 * argv[4] points to segment numbers this ioctl cleans.  We
+	 * use kmalloc() for its buffer because memory used for the
+	 * segment numbers is enough small.
+	 */
+	kbufs[0] = memdup_user((void __user *)(unsigned long)argv[0].v_base,
+			       nsegs * sizeof(__u64));
+	if (IS_ERR(kbufs[0])) {
+		ret = PTR_ERR(kbufs[0]);
+		goto out;
+	}
+	kbufs[1] = memdup_user((void __user *)(unsigned long)argv[1].v_base,
+			       nsegs * sizeof(__u32));
+	if (IS_ERR(kbufs[1])) {
+		ret = PTR_ERR(kbufs[1]);
+		goto out;
+	}
+	nilfs = inode->i_sb->s_fs_info;
+
+	ret = nilfs_sufile_set_segment_nblocks(nilfs->ns_sufile, kbufs[0], kbufs[1], nsegs);
+
+out_free:
+	kfree(kbufs[0]);
+	kfree(kbufs[1]);
+out:
+	mnt_drop_write_file(filp);
+	return ret;
+}
+
 static int nilfs_ioctl_sync(struct inode *inode, struct file *filp,
 			    unsigned int cmd, void __user *argp)
 {
@@ -912,6 +970,8 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_info(inode, filp, cmd, argp,
 					    sizeof(struct nilfs_suinfo),
 					    nilfs_ioctl_do_get_suinfo);
+	case NILFS_IOCTL_SET_SUINFO_NBLOCKS:
+		return nilfs_ioctl_set_suinfo_nblocks(inode, filp, cmd, argp);
 	case NILFS_IOCTL_GET_SUSTAT:
 		return nilfs_ioctl_get_sustat(inode, filp, cmd, argp);
 	case NILFS_IOCTL_GET_VINFO:
