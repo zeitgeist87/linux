@@ -818,15 +818,15 @@ static int nilfs_ioctl_set_suinfo_nblocks(struct inode *inode, struct file *filp
 			       nsegs * sizeof(__u32));
 	if (IS_ERR(kbufs[1])) {
 		ret = PTR_ERR(kbufs[1]);
-		goto out;
+		goto out_free;
 	}
 	nilfs = inode->i_sb->s_fs_info;
 
 	ret = nilfs_sufile_set_segment_nblocks(nilfs->ns_sufile, kbufs[0], kbufs[1], nsegs);
 
+	kfree(kbufs[1]);
 out_free:
 	kfree(kbufs[0]);
-	kfree(kbufs[1]);
 out:
 	mnt_drop_write_file(filp);
 	return ret;
