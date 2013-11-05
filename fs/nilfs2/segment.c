@@ -1520,7 +1520,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 		if(countblocks) {
 			if (bh->b_blocknr > 0) {
 				segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
-				if (segnum < nilfs->ns_nsegments) {
+				if (segnum < nilfs->ns_nsegments && segnum != nilfs_get_segnum_of_block(nilfs, blocknr)) {
 					//printk(KERN_CRIT "PAYLOADBLOCKNUMBER: %lu\n", bh->b_blocknr);
 					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum, 0);
 				}
