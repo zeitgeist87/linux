@@ -1475,6 +1475,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				     struct nilfs_segment_buffer *segbuf,
 				     int mode)
 {
+	struct the_nilfs *nilfs = sci->sc_super->s_fs_info;
 	struct inode *inode = NULL;
 	sector_t blocknr;
 	unsigned long nfinfo = segbuf->sb_sum.nfinfo;
@@ -1485,7 +1486,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	union nilfs_binfo binfo;
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
-	int err = 0;
+	int countblocks, err = 0;
+	__u64 segnum;
 
 	if (!nfinfo)
 		goto out;
@@ -1503,6 +1505,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			ino = le64_to_cpu(finfo->fi_ino);
 			nblocks = le32_to_cpu(finfo->fi_nblocks);
 			ndatablk = le32_to_cpu(finfo->fi_ndatablk);
+			countblocks = (ino == NILFS_DAT_INO || ino == NILFS_CPFILE_INO  || ino == NILFS_SUFILE_INO) ? 1 : 0;
 
 			inode = bh->b_page->mapping->host;
 
@@ -1513,6 +1516,17 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			else /* file blocks */
 				sc_op = &nilfs_sc_file_ops;
 		}
+
+		if(countblocks) {
+			if (bh->b_blocknr > 0) {
+				segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
+				if (segnum < nilfs->ns_nsegments) {
+					//printk(KERN_CRIT "PAYLOADBLOCKNUMBER: %lu\n", bh->b_blocknr);
+					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum, 0);
+				}
+			}
+		}
+
 		bh_org = bh;
 		get_bh(bh_org);
 		err = nilfs_bmap_assign(NILFS_I(inode)->i_bmap, &bh, blocknr,
@@ -1522,6 +1536,13 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 		brelse(bh_org);
 		if (unlikely(err))
 			goto failed_bmap;
+
+
+		if(countblocks) {
+			lock_buffer(bh);
+			bh->b_blocknr = blocknr;
+			unlock_buffer(bh);
+		}
 
 		if (ndatablk > 0)
 			sc_op->write_data_binfo(sci, &ssp, &binfo);

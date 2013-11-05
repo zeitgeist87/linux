@@ -208,7 +208,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 
 	if (blocknr == 0)
 		nilfs_dat_commit_free(dat, req);
-	else{
+	else if (!dead){
 		nilfs =  dat->i_sb->s_fs_info;
 		nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, nilfs_get_segnum_of_block(nilfs, blocknr), is_sufile);
 		nilfs_dat_commit_entry(dat, req);
