@@ -1377,6 +1377,7 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 
 	list_for_each_entry(segbuf, &sci->sc_segbufs, sb_list) {
 		live_blocks = segbuf->sb_sum.nblocks + segbuf->sb_su_blocks;
+		printk(KERN_CRIT "SET_USAGE: %llu %lu\n", segbuf->sb_segnum, live_blocks);
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
 						     sci->sc_seg_ctime);
@@ -1390,6 +1391,7 @@ static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
 	int ret;
 
 	segbuf = NILFS_FIRST_SEGBUF(logs);
+	printk(KERN_CRIT "CANCEL_SET_USAGE: %llu %u\n", segbuf->sb_segnum, segbuf->sb_su_blocks_init);
 	ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 					segbuf->sb_su_blocks_init, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
@@ -1525,10 +1527,12 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 		if(bh->b_blocknr > 0 && bh->b_blocknr != -1) {
 			segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
 			if (segnum < nilfs->ns_nsegments) {
-				//printk(KERN_CRIT "PAYLOADBLOCKNUMBER: %lu %lu %llu %llu %lu\n", bh->b_blocknr, blocknr, segnum, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
+
 				if (segnum == segbuf->sb_segnum) {
+					printk(KERN_CRIT "PAYLOADBLOCKNUMBER1: %llu %lu %lu %llu %lu\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
 					segbuf->sb_su_blocks--;
 				} else {
+					printk(KERN_CRIT "PAYLOADBLOCKNUMBER2: %llu %lu %lu %llu %lu\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
 					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
 				}
 			}

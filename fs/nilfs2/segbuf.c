@@ -100,7 +100,7 @@ int nilfs_segbuf_set_sui(struct nilfs_segment_buffer *segbuf, struct the_nilfs *
 
 	segbuf->sb_su_blocks = si.sui_nblocks;
 	segbuf->sb_su_blocks_init = si.sui_nblocks;
-	//printk(KERN_CRIT "BEGIN_CONSTRUCTION: %u\n", segbuf->sb_su_blocks);
+	printk(KERN_CRIT "BEGIN_CONSTRUCTION: %llu %u\n", segbuf->sb_segnum, segbuf->sb_su_blocks);
 	return 0;
 }
 
