@@ -1257,6 +1257,10 @@ static int nilfs_segctor_begin_construction(struct nilfs_sc_info *sci,
 	}
 	nilfs_segbuf_set_next_segnum(segbuf, nextnum, nilfs);
 
+	err = nilfs_segbuf_set_sui(segbuf, nilfs);
+	if (err)
+		goto failed;
+
 	BUG_ON(!list_empty(&sci->sc_segbufs));
 	list_add_tail(&segbuf->sb_list, &sci->sc_segbufs);
 	sci->sc_segbuf_nblocks = segbuf->sb_rest_blocks;
@@ -1305,6 +1309,10 @@ static int nilfs_segctor_extend_segments(struct nilfs_sc_info *sci,
 
 		segbuf->sb_sum.seg_seq = prev->sb_sum.seg_seq + 1;
 		nilfs_segbuf_set_next_segnum(segbuf, nextnextnum, nilfs);
+
+		err = nilfs_segbuf_set_sui(segbuf, nilfs);
+		if (err)
+			goto failed;
 
 		list_add_tail(&segbuf->sb_list, &list);
 		prev = segbuf;
@@ -1368,8 +1376,7 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 	int ret;
 
 	list_for_each_entry(segbuf, &sci->sc_segbufs, sb_list) {
-		live_blocks = segbuf->sb_sum.nblocks +
-			(segbuf->sb_pseg_start - segbuf->sb_fseg_start);
+		live_blocks = segbuf->sb_sum.nblocks + segbuf->sb_su_blocks;
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
 						     sci->sc_seg_ctime);
@@ -1384,8 +1391,7 @@ static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
 
 	segbuf = NILFS_FIRST_SEGBUF(logs);
 	ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
-					     segbuf->sb_pseg_start -
-					     segbuf->sb_fseg_start, 0);
+					segbuf->sb_su_blocks_init, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
 
 	list_for_each_entry_continue(segbuf, logs, sb_list) {
@@ -1486,7 +1492,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	union nilfs_binfo binfo;
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
-	int countblocks, err = 0;
+	int err = 0;
 	__u64 segnum;
 
 	if (!nfinfo)
@@ -1505,7 +1511,6 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			ino = le64_to_cpu(finfo->fi_ino);
 			nblocks = le32_to_cpu(finfo->fi_nblocks);
 			ndatablk = le32_to_cpu(finfo->fi_ndatablk);
-			countblocks = (ino == NILFS_DAT_INO || ino == NILFS_CPFILE_INO  || ino == NILFS_SUFILE_INO) ? 1 : 0;
 
 			inode = bh->b_page->mapping->host;
 
@@ -1517,12 +1522,14 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
-		if(countblocks) {
-			if (bh->b_blocknr > 0) {
-				segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
-				if (segnum < nilfs->ns_nsegments && segnum != nilfs_get_segnum_of_block(nilfs, blocknr)) {
-					//printk(KERN_CRIT "PAYLOADBLOCKNUMBER: %lu\n", bh->b_blocknr);
-					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum, 0);
+		if(bh->b_blocknr > 0 && bh->b_blocknr != -1) {
+			segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
+			if (segnum < nilfs->ns_nsegments) {
+				//printk(KERN_CRIT "PAYLOADBLOCKNUMBER: %lu %lu %llu %llu %lu\n", bh->b_blocknr, blocknr, segnum, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
+				if (segnum == segbuf->sb_segnum) {
+					segbuf->sb_su_blocks--;
+				} else {
+					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
 				}
 			}
 		}
@@ -1536,13 +1543,6 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 		brelse(bh_org);
 		if (unlikely(err))
 			goto failed_bmap;
-
-
-		if(countblocks) {
-			lock_buffer(bh);
-			bh->b_blocknr = blocknr;
-			unlock_buffer(bh);
-		}
 
 		if (ndatablk > 0)
 			sc_op->write_data_binfo(sci, &ssp, &binfo);

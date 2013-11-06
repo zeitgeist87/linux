@@ -782,6 +782,8 @@ static int nilfs_ioctl_set_suinfo_nblocks(struct inode *inode, struct file *filp
 	struct the_nilfs *nilfs;
 	size_t nsegs;
 	int ret;
+	struct nilfs_transaction_info ti;
+
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -822,12 +824,19 @@ static int nilfs_ioctl_set_suinfo_nblocks(struct inode *inode, struct file *filp
 	}
 	nilfs = inode->i_sb->s_fs_info;
 
+	ret = nilfs_transaction_begin(inode->i_sb, &ti, 1);
+	if (unlikely(ret))
+		goto out_trans;
+
 	ret = nilfs_sufile_set_segment_nblocks(nilfs->ns_sufile, kbufs[0], kbufs[1], nsegs);
 
+	nilfs_transaction_commit(inode->i_sb);
+
+  out_trans:
 	kfree(kbufs[1]);
-out_free:
+  out_free:
 	kfree(kbufs[0]);
-out:
+  out:
 	mnt_drop_write_file(filp);
 	return ret;
 }
