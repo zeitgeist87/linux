@@ -1529,7 +1529,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
-		if(count_blocks && bh->b_blocknr > 0 && bh->b_blocknr != -1) {
+		if(count_blocks && bh->b_blocknr > 0 && bh->b_blocknr != -1 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
 			oldblocknr = bh->b_blocknr;
 
 			segnum = nilfs_get_segnum_of_block(nilfs, oldblocknr);
