@@ -1534,10 +1534,12 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			if (segnum < nilfs->ns_nsegments) {
 
 				if (segnum == segbuf->sb_segnum) {
-					//printk(KERN_CRIT "PAYLOADBLOCKNUMBER1: %llu %lu %lu %llu %lu\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
+					if (segnum >= 7000 && segnum <= 7005)
+						printk(KERN_CRIT "PAYLOADBLOCKNUMBER1: %llu %lu %lu %llu %lu\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
 					segbuf->sb_su_blocks--;
 				} else {
-					//printk(KERN_CRIT "PAYLOADBLOCKNUMBER2: %llu %lu %lu %llu %lu\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
+					if (segnum >= 7000 && segnum <= 7005)
+						printk(KERN_CRIT "PAYLOADBLOCKNUMBER2: %llu %lu %lu %llu %lu\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino);
 					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
 				}
 			}
