@@ -57,7 +57,8 @@ nilfs_btnode_create_block(struct address_space *btnc, __u64 blocknr)
 	}
 	memset(bh->b_data, 0, 1 << inode->i_blkbits);
 	bh->b_bdev = inode->i_sb->s_bdev;
-	bh->b_blocknr = blocknr;
+	//bh->b_blocknr = blocknr;
+	//bh->b_blocknr = 0;
 	set_buffer_mapped(bh);
 	set_buffer_uptodate(bh);
 
@@ -120,7 +121,7 @@ int nilfs_btnode_submit_block(struct address_space *btnc, __u64 blocknr,
 	bh->b_end_io = end_buffer_read_sync;
 	get_bh(bh);
 	submit_bh(mode, bh);
-	bh->b_blocknr = blocknr; /* set back to the given block address */
+	//bh->b_blocknr = blocknr; /* set back to the given block address */
 	*submit_ptr = pblocknr;
 	err = 0;
 found:
@@ -262,13 +263,14 @@ void nilfs_btnode_commit_change_key(struct address_space *btnc,
 				   PAGECACHE_TAG_DIRTY);
 		spin_unlock_irq(&btnc->tree_lock);
 
-		opage->index = obh->b_blocknr = newkey;
+		//opage->index = obh->b_blocknr = newkey;
+		opage->index = newkey;
 		unlock_page(opage);
 	} else {
 		nilfs_copy_buffer(nbh, obh);
 		mark_buffer_dirty(nbh);
 
-		nbh->b_blocknr = newkey;
+		//nbh->b_blocknr = newkey;
 		ctxt->bh = nbh;
 		nilfs_btnode_delete(obh); /* will decrement bh->b_count */
 	}
