@@ -563,6 +563,7 @@ static void nilfs_sufile_do_set_nblocks(struct inode *sufile, __u64 segnum, __u3
 		return;
 	}
 
+	//printk(KERN_CRIT "SET_SU_NBLOCKS: %llu %u\n", segnum, nblocks);
 	su->su_nblocks = cpu_to_le32(nblocks);
 	kunmap_atomic(kaddr);
 
@@ -783,7 +784,7 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum)
 		goto out_sem;
 	}
 
-	printk(KERN_CRIT "DEC_SU: %llu %u\n", segnum, le32_to_cpu(su->su_nblocks));
+	//printk(KERN_CRIT "DEC_SU: %llu %u\n", segnum, le32_to_cpu(su->su_nblocks));
 
 	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks)-1);
 	kunmap_atomic(kaddr);
