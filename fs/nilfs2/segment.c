@@ -1529,6 +1529,10 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
+		if (count_blocks && ino != NILFS_DAT_INO && buffer_nilfs_node(bh)){
+			printk(KERN_CRIT "NODE: %lu %lu %llu %lu %d %d %d %d %llx\n", bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
+		}
+
 		if(count_blocks && bh->b_blocknr > 0 && bh->b_blocknr != -1 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
 			oldblocknr = bh->b_blocknr;
 
