@@ -458,12 +458,13 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 				  struct nilfs_write_info *wi,
 				  struct buffer_head *bh, int mode)
 {
-	struct inode *inode = NULL;
+	/*struct inode *inode = NULL;
 	struct nilfs_inode_info *ii;
 	struct the_nilfs *nilfs = segbuf->sb_super->s_fs_info;
 	ino_t ino = 0;
 	sector_t blocknr;
-	__u64 segnum;
+	__u64 segnum;*/
+	struct the_nilfs *nilfs = segbuf->sb_super->s_fs_info;
 	int len, err;
 
 	BUG_ON(wi->nr_vecs <= 0);
@@ -478,7 +479,7 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 	len = bio_add_page(wi->bio, bh->b_page, bh->b_size, bh_offset(bh));
 	if (len == bh->b_size) {
 		//lock_buffer(bh);
-		inode = bh->b_page->mapping->host;
+		/*inode = bh->b_page->mapping->host;
 		ii = NILFS_I(inode);
 		ino = inode->i_ino;
 		blocknr = wi->blocknr + wi->end;
@@ -488,18 +489,20 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 			if (segnum < nilfs->ns_nsegments) {
 
 				if (segnum == segbuf->sb_segnum) {
-					if (segnum >= 7000 && segnum <= 7010)
+					//if (segnum >= 7000 && segnum <= 7010)
 						printk(KERN_CRIT "PAYLOADBLOCKNUMBER1: %llu %lu %lu %llu %lu %d %d %d %d %llx\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
 					segbuf->sb_su_blocks--;
 				} else {
-					if (segnum >= 7000 && segnum <= 7010)
+					//if (segnum >= 7000 && segnum <= 7010)
 						printk(KERN_CRIT "PAYLOADBLOCKNUMBER2: %llu %lu %lu %llu %lu %d %d %d %d %llx\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
 					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
 				}
 			}
+		}*/
+		if (bh->b_blocknr != wi->blocknr + wi->end && !buffer_nilfs_node(bh)) {
+			printk(KERN_CRIT "MAP: %llu %lu %lu %llu %d\n", nilfs_get_segnum_of_block(nilfs, bh->b_blocknr), bh->b_blocknr, wi->blocknr + wi->end, nilfs_get_segnum_of_block(nilfs, wi->blocknr + wi->end), buffer_nilfs_node(bh));
+			map_bh(bh, segbuf->sb_super, wi->blocknr + wi->end);
 		}
-
-		map_bh(bh, segbuf->sb_super, wi->blocknr + wi->end);
 		//unlock_buffer(bh);
 		wi->end++;
 		return 0;
