@@ -1530,6 +1530,10 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
+		if (bh->b_blocknr == -1 || ino < NILFS_USER_INO) {
+			printk(KERN_CRIT "COUNT: %lu %d %d %d %d %llx\n", ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh)
+		}
+
 		if(count_blocks && bh->b_blocknr > 0 && bh->b_blocknr != -1 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
 			oldblocknr = bh->b_blocknr;
 
