@@ -1376,7 +1376,8 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 	int ret;
 
 	list_for_each_entry(segbuf, &sci->sc_segbufs, sb_list) {
-		live_blocks = segbuf->sb_sum.nblocks + segbuf->sb_su_blocks;
+		//live_blocks = segbuf->sb_sum.nblocks + segbuf->sb_su_blocks;
+		live_blocks = segbuf->sb_sum.nfileblk + segbuf->sb_su_blocks;
 		printk(KERN_CRIT "SET_USAGE: %llu %lu\n", segbuf->sb_segnum, live_blocks);
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
