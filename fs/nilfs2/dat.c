@@ -186,7 +186,7 @@ int nilfs_dat_prepare_end(struct inode *dat, struct nilfs_palloc_req *req)
 }
 
 void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
-			  int dead, int delete)
+			  int dead, int count_blocks)
 {
 	struct nilfs_dat_entry *entry;
 	__u64 start, end;
@@ -211,7 +211,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 	else {
 		nilfs_dat_commit_entry(dat, req);
 
-		if (!dead && delete) {
+		if (!dead && count_blocks) {
 			nilfs =  dat->i_sb->s_fs_info;
 			//printk(KERN_CRIT "BLOCKNUMBER: %llu %lu\n", nilfs_get_segnum_of_block(nilfs, blocknr), blocknr);
 			nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, nilfs_get_segnum_of_block(nilfs, blocknr));
@@ -255,9 +255,9 @@ int nilfs_dat_prepare_update(struct inode *dat,
 
 void nilfs_dat_commit_update(struct inode *dat,
 			     struct nilfs_palloc_req *oldreq,
-			     struct nilfs_palloc_req *newreq, int dead)
+			     struct nilfs_palloc_req *newreq, int dead, int count_blocks)
 {
-	nilfs_dat_commit_end(dat, oldreq, dead, 0);
+	nilfs_dat_commit_end(dat, oldreq, dead, count_blocks);
 	nilfs_dat_commit_alloc(dat, newreq);
 }
 
