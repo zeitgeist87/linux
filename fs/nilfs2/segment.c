@@ -1518,7 +1518,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 			inode = bh->b_page->mapping->host;
 
-			printk(KERN_CRIT "FINFO: %lu %lu %lu\n", ino, nblocks, ndatablk);
+			printk(KERN_CRIT "FINFO: %llu %lu %lu %lu\n", segbuf->sb_segnum, ino, nblocks, ndatablk);
 
 			ii = NILFS_I(inode);
 			count_blocks = !test_bit(NILFS_I_GCINODE, &ii->i_state) && (ino == NILFS_DAT_INO || ino == NILFS_SUFILE_INO || ino == NILFS_CPFILE_INO);
@@ -1532,7 +1532,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 		}
 
 		if (bh->b_blocknr == -1 || ino < NILFS_USER_INO) {
-			printk(KERN_CRIT "COUNT: %lu %lu %d %d %d %d %llx\n", ino, bh->b_blocknr, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
+			printk(KERN_CRIT "COUNT: %llu %lu %lu %d %d %d %d %llx\n", segbuf->sb_segnum, ino, bh->b_blocknr, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
 		}
 
 		if(count_blocks && bh->b_blocknr > 0 && bh->b_blocknr != -1 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
