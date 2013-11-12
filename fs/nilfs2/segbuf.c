@@ -478,7 +478,7 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 
 	len = bio_add_page(wi->bio, bh->b_page, bh->b_size, bh_offset(bh));
 	if (len == bh->b_size) {
-		//lock_buffer(bh);
+		lock_buffer(bh);
 		/*inode = bh->b_page->mapping->host;
 		ii = NILFS_I(inode);
 		ino = inode->i_ino;
@@ -499,12 +499,12 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 				}
 			}
 		}*/
-		if (bh->b_blocknr != wi->blocknr + wi->end && !buffer_nilfs_node(bh)) {
-			if (nilfs_get_segnum_of_block(nilfs, bh->b_blocknr) >= 7000 && nilfs_get_segnum_of_block(nilfs, bh->b_blocknr) <= 7005)
-				printk(KERN_CRIT "MAP: %llu %lu %lu %llu %d\n", nilfs_get_segnum_of_block(nilfs, bh->b_blocknr), bh->b_blocknr, wi->blocknr + wi->end, nilfs_get_segnum_of_block(nilfs, wi->blocknr + wi->end), buffer_nilfs_node(bh));
+		//if (bh->b_blocknr != wi->blocknr + wi->end && !buffer_nilfs_node(bh)) {
+		//	if (nilfs_get_segnum_of_block(nilfs, bh->b_blocknr) >= 7000 && nilfs_get_segnum_of_block(nilfs, bh->b_blocknr) <= 7005)
+		//		printk(KERN_CRIT "MAP: %llu %lu %lu %llu %d\n", nilfs_get_segnum_of_block(nilfs, bh->b_blocknr), bh->b_blocknr, wi->blocknr + wi->end, nilfs_get_segnum_of_block(nilfs, wi->blocknr + wi->end), buffer_nilfs_node(bh));
 			map_bh(bh, segbuf->sb_super, wi->blocknr + wi->end);
-		}
-		//unlock_buffer(bh);
+		//}
+		unlock_buffer(bh);
 		wi->end++;
 		return 0;
 	}
