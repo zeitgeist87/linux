@@ -1531,6 +1531,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
+		print = 0;
 		if (bh->b_blocknr == -1 || ino < NILFS_USER_INO) {
 			print = 1;
 			printk(KERN_CRIT "COUNT: %llu %llu %lu %lu %lu %d %d %d %d %llx\n", segbuf->sb_segnum, nilfs_get_segnum_of_block(nilfs, bh->b_blocknr), ino, bh->b_blocknr, blocknr, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
