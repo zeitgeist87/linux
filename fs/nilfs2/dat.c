@@ -215,7 +215,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 		if (!dead) {
 			nilfs =  dat->i_sb->s_fs_info;
 			//printk(KERN_CRIT "BLOCKNUMBER: %llu %lu\n", nilfs_get_segnum_of_block(nilfs, blocknr), blocknr);
-			nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, nilfs_get_segnum_of_block(nilfs, blocknr));
+			nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, nilfs_get_segnum_of_block(nilfs, blocknr), 0);
 		}
 	}
 }

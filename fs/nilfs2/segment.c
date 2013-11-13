@@ -1496,7 +1496,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	union nilfs_binfo binfo;
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
-	int count_blocks = 0, err = 0;
+	int count_blocks = 0, err = 0, print = 0;
 	__u64 segnum;
 
 	if (!nfinfo)
@@ -1532,6 +1532,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 		}
 
 		if (bh->b_blocknr == -1 || ino < NILFS_USER_INO) {
+			print = 1;
 			printk(KERN_CRIT "COUNT: %llu %llu %lu %lu %lu %d %d %d %d %llx\n", segbuf->sb_segnum, nilfs_get_segnum_of_block(nilfs, bh->b_blocknr), ino, bh->b_blocknr, blocknr, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
 		}
 
@@ -1548,7 +1549,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				} else {
 					if (segnum >= 7000 && segnum <= 7005)
 						printk(KERN_CRIT "PAYLOADBLOCKNUMBER2: %llu %lu %lu %llu %lu %d %d %d %d %llx\n", segnum, oldblocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
-					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
+					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum, print);
 				}
 			}
 		}

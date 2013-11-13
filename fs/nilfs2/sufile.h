@@ -76,7 +76,7 @@ void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
 			   struct buffer_head *header_bh,
 			   struct buffer_head *su_bh);
 
-int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum);
+int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int);
 
 int nilfs_sufile_set_segment_nblocks(struct inode *sufile, __u64 *, __u32 *, size_t);
 

@@ -762,7 +762,7 @@ void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
  * @sufile: inode of segment usage file
  * @segnum: segment number
  */
-int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum)
+int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int print)
 {
 	struct buffer_head *bh;
 	struct nilfs_segment_usage *su;
@@ -784,7 +784,8 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum)
 		goto out_sem;
 	}
 
-	//printk(KERN_CRIT "DEC_SU: %llu %u\n", segnum, le32_to_cpu(su->su_nblocks));
+	if (print)
+		printk(KERN_CRIT "DEC_SU: %llu %u\n", segnum, le32_to_cpu(su->su_nblocks));
 
 	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks)-1);
 	kunmap_atomic(kaddr);
