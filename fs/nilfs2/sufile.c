@@ -776,6 +776,9 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int print
 	if (ret < 0)
 		goto out_sem;
 
+	if (print)
+		printk(KERN_CRIT "DEC_SU: %llu %u\n", segnum, le32_to_cpu(su->su_nblocks));
+
 	kaddr = kmap_atomic(bh->b_page);
 	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, bh, kaddr);
 	WARN_ON(nilfs_segment_usage_error(su));
@@ -783,9 +786,6 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int print
 		kunmap_atomic(kaddr);
 		goto out_sem;
 	}
-
-	if (print)
-		printk(KERN_CRIT "DEC_SU: %llu %u\n", segnum, le32_to_cpu(su->su_nblocks));
 
 	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks)-1);
 	kunmap_atomic(kaddr);
