@@ -59,7 +59,7 @@ struct nilfs_segment_buffer *nilfs_segbuf_new(struct super_block *sb)
 	INIT_LIST_HEAD(&segbuf->sb_payload_buffers);
 	segbuf->sb_super_root = NULL;
 	segbuf->sb_su_blocks = 0;
-	segbuf->sb_su_blocks_init = 0;
+	segbuf->sb_su_blocks_cancel = 0;
 
 	init_completion(&segbuf->sb_bio_event);
 	atomic_set(&segbuf->sb_err, 0);
@@ -99,8 +99,7 @@ int nilfs_segbuf_set_sui(struct nilfs_segment_buffer *segbuf, struct the_nilfs *
 		si.sui_nblocks = segbuf->sb_pseg_start - segbuf->sb_fseg_start;
 
 	segbuf->sb_su_blocks = si.sui_nblocks;
-	segbuf->sb_su_blocks_init = si.sui_nblocks;
-	printk(KERN_CRIT "BEGIN_CONSTRUCTION: %llu %u\n", segbuf->sb_segnum, segbuf->sb_su_blocks);
+	segbuf->sb_su_blocks_cancel = si.sui_nblocks;
 	return 0;
 }
 
@@ -458,13 +457,6 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 				  struct nilfs_write_info *wi,
 				  struct buffer_head *bh, int mode)
 {
-	/*struct inode *inode = NULL;
-	struct nilfs_inode_info *ii;
-	struct the_nilfs *nilfs = segbuf->sb_super->s_fs_info;
-	ino_t ino = 0;
-	sector_t blocknr;
-	__u64 segnum;*/
-	struct the_nilfs *nilfs = segbuf->sb_super->s_fs_info;
 	int len, err;
 
 	BUG_ON(wi->nr_vecs <= 0);
@@ -478,33 +470,7 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 
 	len = bio_add_page(wi->bio, bh->b_page, bh->b_size, bh_offset(bh));
 	if (len == bh->b_size) {
-		lock_buffer(bh);
-		/*inode = bh->b_page->mapping->host;
-		ii = NILFS_I(inode);
-		ino = inode->i_ino;
-		blocknr = wi->blocknr + wi->end;
-
-		if(!test_bit(NILFS_I_GCINODE, &ii->i_state) && bh->b_blocknr > 0 && bh->b_blocknr != -1 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
-			segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
-			if (segnum < nilfs->ns_nsegments) {
-
-				if (segnum == segbuf->sb_segnum) {
-					//if (segnum >= 7000 && segnum <= 7010)
-						printk(KERN_CRIT "PAYLOADBLOCKNUMBER1: %llu %lu %lu %llu %lu %d %d %d %d %llx\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
-					segbuf->sb_su_blocks--;
-				} else {
-					//if (segnum >= 7000 && segnum <= 7010)
-						printk(KERN_CRIT "PAYLOADBLOCKNUMBER2: %llu %lu %lu %llu %lu %d %d %d %d %llx\n", segnum, bh->b_blocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
-					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
-				}
-			}
-		}*/
-		//if (bh->b_blocknr != wi->blocknr + wi->end && !buffer_nilfs_node(bh)) {
-		//	if (nilfs_get_segnum_of_block(nilfs, bh->b_blocknr) >= 7000 && nilfs_get_segnum_of_block(nilfs, bh->b_blocknr) <= 7005)
-		//		printk(KERN_CRIT "MAP: %llu %lu %lu %llu %d\n", nilfs_get_segnum_of_block(nilfs, bh->b_blocknr), bh->b_blocknr, wi->blocknr + wi->end, nilfs_get_segnum_of_block(nilfs, wi->blocknr + wi->end), buffer_nilfs_node(bh));
-			map_bh(bh, segbuf->sb_super, wi->blocknr + wi->end);
-		//}
-		unlock_buffer(bh);
+		map_bh(bh, segbuf->sb_super, wi->blocknr + wi->end);
 		wi->end++;
 		return 0;
 	}

@@ -1376,9 +1376,8 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 	int ret;
 
 	list_for_each_entry(segbuf, &sci->sc_segbufs, sb_list) {
-		//live_blocks = segbuf->sb_sum.nblocks + segbuf->sb_su_blocks;
 		live_blocks = segbuf->sb_sum.nfileblk + segbuf->sb_su_blocks;
-		printk(KERN_CRIT "SET_USAGE: %llu %lu\n", segbuf->sb_segnum, live_blocks);
+
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
 						     sci->sc_seg_ctime);
@@ -1392,9 +1391,9 @@ static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
 	int ret;
 
 	segbuf = NILFS_FIRST_SEGBUF(logs);
-	printk(KERN_CRIT "CANCEL_SET_USAGE: %llu %u\n", segbuf->sb_segnum, segbuf->sb_su_blocks_init);
+
 	ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
-					segbuf->sb_su_blocks_init, 0);
+					segbuf->sb_su_blocks_cancel, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
 
 	list_for_each_entry_continue(segbuf, logs, sb_list) {
@@ -1487,7 +1486,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	struct the_nilfs *nilfs = sci->sc_super->s_fs_info;
 	struct inode *inode = NULL;
 	struct nilfs_inode_info *ii;
-	sector_t blocknr, oldblocknr;
+	sector_t blocknr;
 	unsigned long nfinfo = segbuf->sb_sum.nfinfo;
 	unsigned long nblocks = 0, ndatablk = 0;
 	struct nilfs_sc_operations *sc_op = NULL;
@@ -1496,7 +1495,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	union nilfs_binfo binfo;
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
-	int count_blocks = 0, err = 0, print = 0;
+	int count_blocks = 0, err = 0;
 	__u64 segnum;
 
 	if (!nfinfo)
@@ -1518,10 +1517,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 			inode = bh->b_page->mapping->host;
 
-			printk(KERN_CRIT "FINFO: %llu %lu %lu %lu\n", segbuf->sb_segnum, ino, nblocks, ndatablk);
-
 			ii = NILFS_I(inode);
-			count_blocks = !test_bit(NILFS_I_GCINODE, &ii->i_state) && (ino == NILFS_DAT_INO || ino == NILFS_SUFILE_INO || ino == NILFS_CPFILE_INO);
+			count_blocks = !test_bit(NILFS_I_GCINODE, &ii->i_state);
 
 			if (mode == SC_LSEG_DSYNC)
 				sc_op = &nilfs_sc_dsync_ops;
@@ -1531,26 +1528,15 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
-		print = 0;
-		if (bh->b_blocknr == -1 || ino < NILFS_USER_INO) {
-			print = 1;
-			printk(KERN_CRIT "COUNT: %llu %llu %lu %lu %lu %d %d %d %d %llx\n", segbuf->sb_segnum, nilfs_get_segnum_of_block(nilfs, bh->b_blocknr), ino, bh->b_blocknr, blocknr, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
-		}
+		if(count_blocks && bh->b_blocknr > 0 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
+			segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
 
-		if(count_blocks && bh->b_blocknr > 0 && bh->b_blocknr != -1 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
-			oldblocknr = bh->b_blocknr;
-
-			segnum = nilfs_get_segnum_of_block(nilfs, oldblocknr);
 			if (segnum < nilfs->ns_nsegments) {
 
 				if (segnum == segbuf->sb_segnum) {
-					if (segnum >= 7000 && segnum <= 7005)
-						printk(KERN_CRIT "PAYLOADBLOCKNUMBER1: %llu %lu %lu %llu %lu %d %d %d %d %llx\n", segnum, oldblocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
 					segbuf->sb_su_blocks--;
 				} else {
-					if (segnum >= 7000 && segnum <= 7005)
-						printk(KERN_CRIT "PAYLOADBLOCKNUMBER2: %llu %lu %lu %llu %lu %d %d %d %d %llx\n", segnum, oldblocknr, blocknr, nilfs_get_segnum_of_block(nilfs, blocknr), ino, buffer_nilfs_redirected(bh), buffer_nilfs_checked(bh), buffer_nilfs_volatile(bh), buffer_nilfs_node(bh), bh);
-					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum, print);
+					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
 				}
 			}
 		}

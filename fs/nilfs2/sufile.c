@@ -762,13 +762,12 @@ void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
  * @sufile: inode of segment usage file
  * @segnum: segment number
  */
-int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int print)
+int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum)
 {
 	struct buffer_head *bh;
 	struct nilfs_segment_usage *su;
 	void *kaddr;
 	int ret;
-
 
 	down_write(&NILFS_MDT(sufile)->mi_sem);
 
@@ -776,15 +775,12 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int print
 	if (ret < 0)
 		goto out_sem;
 
-	if (print)
-		printk(KERN_CRIT "DEC_SU: %llu %u\n", segnum, le32_to_cpu(su->su_nblocks));
-
 	kaddr = kmap_atomic(bh->b_page);
 	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, bh, kaddr);
 	WARN_ON(nilfs_segment_usage_error(su));
 	if(su->su_nblocks == le32_to_cpu(0)){
 		kunmap_atomic(kaddr);
-		goto out_sem;
+		goto out_brelse;
 	}
 
 	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks)-1);
@@ -792,8 +788,9 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, int print
 
 	mark_buffer_dirty(bh);
 	nilfs_mdt_mark_dirty(sufile);
-	brelse(bh);
 
+ out_brelse:
+	brelse(bh);
  out_sem:
 	up_write(&NILFS_MDT(sufile)->mi_sem);
 	return ret;
