@@ -550,7 +550,7 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
 	return ret;
 }
 
-static void nilfs_sufile_do_set_nblocks(struct inode *sufile, __u64 segnum, __u32 nblocks,
+static void nilfs_sufile_do_set_segment_usage_nblocks(struct inode *sufile, __u64 segnum, __u32 nblocks,
 			   struct buffer_head *header_bh,
 			   struct buffer_head *su_bh)
 {
@@ -560,13 +560,34 @@ static void nilfs_sufile_do_set_nblocks(struct inode *sufile, __u64 segnum, __u3
 	kaddr = kmap_atomic(su_bh->b_page);
 	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, su_bh, kaddr);
 	if (su->su_nblocks == cpu_to_le32(nblocks) || nilfs_segment_usage_active(su)
-			|| nilfs_segment_usage_error(su)){
+			|| nilfs_segment_usage_error(su)) {
 		kunmap_atomic(kaddr);
 		return;
 	}
 
-	//printk(KERN_CRIT "SET_SU_NBLOCKS: %llu %u\n", segnum, nblocks);
 	su->su_nblocks = cpu_to_le32(nblocks);
+	kunmap_atomic(kaddr);
+
+	mark_buffer_dirty(su_bh);
+	nilfs_mdt_mark_dirty(sufile);
+}
+
+static void nilfs_sufile_do_set_segment_usage_lastmod(struct inode *sufile, __u64 segnum, __u64 lastmod,
+			   struct buffer_head *header_bh,
+			   struct buffer_head *su_bh)
+{
+	struct nilfs_segment_usage *su;
+	void *kaddr;
+
+	kaddr = kmap_atomic(su_bh->b_page);
+	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, su_bh, kaddr);
+	if (su->su_lastmod == cpu_to_le64(lastmod) || nilfs_segment_usage_active(su)
+			|| nilfs_segment_usage_error(su)) {
+		kunmap_atomic(kaddr);
+		return;
+	}
+
+	su->su_lastmod = cpu_to_le64(lastmod);
 	kunmap_atomic(kaddr);
 
 	mark_buffer_dirty(su_bh);
@@ -580,11 +601,11 @@ static void nilfs_sufile_do_set_nblocks(struct inode *sufile, __u64 segnum, __u3
  * @nblocksv: vector of nblocks
  * @nsegs: number of segments
  */
-int nilfs_sufile_set_segment_nblocks(struct inode *sufile, __u64 *segnumv, __u32 *nblocksv, size_t nsegs)
+int nilfs_sufile_set_segment_usagev(struct inode *sufile, __u64 *segnumv, __u32 *nblocksv, __u64 *lastmodv, size_t nsegs)
 {
 	struct buffer_head *header_bh, *bh;
 	unsigned long blkoff, prev_blkoff;
-	__u64 *seg;
+	__u64 *seg, *lastmod;
 	__u32 *nblocks;
 	size_t nerr = 0, n = 0;
 	int ret = 0;
@@ -611,6 +632,7 @@ int nilfs_sufile_set_segment_nblocks(struct inode *sufile, __u64 *segnumv, __u32
 		goto out_sem;
 
 	seg = segnumv;
+	lastmod = lastmodv;
 	nblocks = nblocksv;
 	blkoff = nilfs_sufile_get_blkoff(sufile, *seg);
 	ret = nilfs_mdt_get_block(sufile, blkoff, 0, NULL, &bh);
@@ -618,11 +640,17 @@ int nilfs_sufile_set_segment_nblocks(struct inode *sufile, __u64 *segnumv, __u32
 		goto out_header;
 
 	for (;;) {
-		nilfs_sufile_do_set_nblocks(sufile, *seg, *nblocks, header_bh, bh);
+		if (nblocks) {
+			nilfs_sufile_do_set_segment_usage_nblocks(sufile, *seg, *nblocks, header_bh, bh);
+			++nblocks;
+		}
+		if (lastmod) {
+			nilfs_sufile_do_set_segment_usage_lastmod(sufile, *seg, *lastmod, header_bh, bh);
+			++lastmod;
+		}
 
 		if (++seg >= segnumv + nsegs)
 			break;
-		++nblocks;
 
 		prev_blkoff = blkoff;
 		blkoff = nilfs_sufile_get_blkoff(sufile, *seg);
