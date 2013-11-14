@@ -484,15 +484,9 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 	if (ret)
 		return ret;
 
-	/* cleaner shouldn't be running while moving blocks */
-	if (test_and_set_bit(THE_NILFS_GC_RUNNING, &nilfs->ns_flags)) {
-		ret = -EBUSY;
-		goto out;
-	}
-
 	ret = nilfs_transaction_begin(inode->i_sb, &ti, 1);
 	if (unlikely(ret))
-		goto out_gc;
+		goto out;
 
 	/* dat shouldn't change while reading physical blocks */
 	down_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
@@ -537,8 +531,6 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 
 	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
 	nilfs_transaction_commit(inode->i_sb);
-  out_gc:
-	clear_nilfs_gc_running(nilfs);
   out:
   	mnt_drop_write_file(filp);
 	return ret;
@@ -549,7 +541,6 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 	}
 	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
 	nilfs_transaction_abort(inode->i_sb);
-	clear_nilfs_gc_running(nilfs);
 	mnt_drop_write_file(filp);
 	return ret;
 }
@@ -830,7 +821,10 @@ static int nilfs_ioctl_set_suinfo_nblocks(struct inode *inode, struct file *filp
 
 	ret = nilfs_sufile_set_segment_nblocks(nilfs->ns_sufile, kbufs[0], kbufs[1], nsegs);
 
-	nilfs_transaction_commit(inode->i_sb);
+	if(likely(!ret))
+		nilfs_transaction_commit(inode->i_sb);
+	else
+		nilfs_transaction_abort(inode->i_sb);
 
   out_trans:
 	kfree(kbufs[1]);

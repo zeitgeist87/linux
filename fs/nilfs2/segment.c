@@ -1496,7 +1496,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
 	int count_blocks = 0, err = 0;
-	__u64 segnum;
+	__u64 segnum, dectime = 0;
 
 	if (!nfinfo)
 		goto out;
@@ -1519,6 +1519,10 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 			ii = NILFS_I(inode);
 			count_blocks = !test_bit(NILFS_I_GCINODE, &ii->i_state);
+			dectime = sci->sc_seg_ctime;
+			/* no update of lastdec necessary */
+			if (ino == NILFS_DAT_INO || ino == NILFS_SUFILE_INO || ino == NILFS_CPFILE_INO)
+				dectime = 0;
 
 			if (mode == SC_LSEG_DSYNC)
 				sc_op = &nilfs_sc_dsync_ops;
@@ -1536,7 +1540,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				if (segnum == segbuf->sb_segnum) {
 					segbuf->sb_su_blocks--;
 				} else {
-					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum);
+					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum, dectime);
 				}
 			}
 		}
