@@ -453,8 +453,7 @@ void nilfs_sufile_do_scrap(struct inode *sufile, __u64 segnum,
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(1UL << NILFS_SEGMENT_USAGE_DIRTY);
-	if (nilfs_sufile_lastdec_supported(sufile))
-		su->su_lastdec = cpu_to_le64(0);
+
 	kunmap_atomic(kaddr);
 
 	nilfs_sufile_mod_counter(header_bh, clean ? (u64)-1 : 0, dirty ? 0 : 1);
@@ -484,7 +483,7 @@ void nilfs_sufile_do_free(struct inode *sufile, __u64 segnum,
 	WARN_ON(!nilfs_segment_usage_dirty(su));
 
 	sudirty = nilfs_segment_usage_dirty(su);
-	nilfs_sufile_segment_usage_set_clean(sufile, su);
+	nilfs_segment_usage_set_clean(su);
 	kunmap_atomic(kaddr);
 	mark_buffer_dirty(su_bh);
 
@@ -791,8 +790,9 @@ void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
  * nilfs_sufile_dec_segment_usage - decrement usage of a segment
  * @sufile: inode of segment usage file
  * @segnum: segment number
+ * @modtime: last modification time
  */
-int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, time_t dectime)
+int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, time_t modtime)
 {
 	struct buffer_head *bh;
 	struct nilfs_segment_usage *su;
@@ -814,8 +814,7 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, time_t de
 	}
 
 	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks)-1);
-	if (dectime && nilfs_sufile_lastdec_supported(sufile))
-		su->su_lastdec = dectime;
+	su->su_lastmod = modtime;
 	kunmap_atomic(kaddr);
 
 	mark_buffer_dirty(bh);
@@ -978,7 +977,7 @@ static int nilfs_sufile_truncate_range(struct inode *sufile,
 		nc = 0;
 		for (su = su2, j = 0; j < n; j++, su = (void *)su + susz) {
 			if (nilfs_segment_usage_error(su)) {
-				nilfs_sufile_segment_usage_set_clean(sufile, su);
+				nilfs_segment_usage_set_clean(su);
 				nc++;
 			}
 		}
@@ -1138,12 +1137,6 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 			if (nilfs_segment_is_active(nilfs, segnum + j))
 				si->sui_flags |=
 					(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
-			if (sisz == sizeof(struct nilfs_suinfo)) {
-				if (susz == sizeof(struct nilfs_segment_usage))
-					si->sui_lastdec = le64_to_cpu(su->su_lastdec);
-				else
-					si->sui_lastdec = 0;
-			}
 		}
 		kunmap_atomic(kaddr);
 		brelse(su_bh);
