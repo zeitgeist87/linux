@@ -813,8 +813,9 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, time_t mo
 		goto out_brelse;
 	}
 
-	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks)-1);
-	su->su_lastmod = modtime;
+	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks) - 1);
+	if (modtime)
+		su->su_lastmod = cpu_to_le64(modtime);
 	kunmap_atomic(kaddr);
 
 	mark_buffer_dirty(bh);
