@@ -84,7 +84,7 @@ struct nilfs_segment_buffer {
 	sector_t		sb_pseg_start;
 	unsigned		sb_rest_blocks;
 	__u32			sb_su_blocks_cancel;
-	__u32			sb_su_blocks;
+	__s64			sb_su_blocks;
 
 	/* Buffers */
 	struct list_head	sb_segsum_buffers;

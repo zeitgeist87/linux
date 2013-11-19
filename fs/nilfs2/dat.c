@@ -438,6 +438,49 @@ int nilfs_dat_translate(struct inode *dat, __u64 vblocknr, sector_t *blocknrp)
 	return ret;
 }
 
+/**
+ * nilfs_dat_is_live - checks if the virtual block number is alive (ignoreing snapshots)
+ * @dat: DAT file inode
+ * @vblocknr: virtual block number
+ *
+ * Return Value: 1 if vblocknr is alive and 0 ohterwise
+ */
+int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr)
+{
+	struct buffer_head *entry_bh, *bh;
+	struct nilfs_dat_entry *entry;
+	sector_t blocknr;
+	void *kaddr;
+	int ret = 0;
+
+	ret = nilfs_palloc_get_entry_block(dat, vblocknr, 0, &entry_bh);
+	if (ret < 0)
+		return 0;
+
+	if (!nilfs_doing_gc() && buffer_nilfs_redirected(entry_bh)) {
+		bh = nilfs_mdt_get_frozen_buffer(dat, entry_bh);
+		if (bh) {
+			WARN_ON(!buffer_uptodate(bh));
+			brelse(entry_bh);
+			entry_bh = bh;
+		}
+	}
+
+	kaddr = kmap_atomic(entry_bh->b_page);
+	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
+	blocknr = le64_to_cpu(entry->de_blocknr);
+	if (blocknr == 0)
+		goto out;
+
+	if (entry->de_end == cpu_to_le64(NILFS_CNO_MAX))
+		ret = 1;
+
+ out:
+	kunmap_atomic(kaddr);
+	brelse(entry_bh);
+	return ret;
+}
+
 ssize_t nilfs_dat_get_vinfo(struct inode *dat, void *buf, unsigned visz,
 			    size_t nvi)
 {

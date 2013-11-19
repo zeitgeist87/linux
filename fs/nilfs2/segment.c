@@ -1377,7 +1377,6 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 
 	list_for_each_entry(segbuf, &sci->sc_segbufs, sb_list) {
 		live_blocks = segbuf->sb_sum.nfileblk + segbuf->sb_su_blocks;
-
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
 						     sci->sc_seg_ctime);
@@ -1542,6 +1541,13 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				} else {
 					nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, segnum, dectime);
 				}
+			}
+		}
+
+		/* check again if gc blocks are alive and adjust counter */
+		if(!count_blocks && bh->b_blocknr > 0) {
+			if (!nilfs_dat_is_live(nilfs->ns_dat, bh->b_blocknr)){
+				segbuf->sb_su_blocks--;
 			}
 		}
 

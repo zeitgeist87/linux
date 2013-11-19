@@ -31,6 +31,7 @@
 struct nilfs_palloc_req;
 
 int nilfs_dat_translate(struct inode *, __u64, sector_t *);
+int nilfs_dat_is_live(struct inode *, __u64);
 
 int nilfs_dat_prepare_alloc(struct inode *, struct nilfs_palloc_req *);
 void nilfs_dat_commit_alloc(struct inode *, struct nilfs_palloc_req *);
