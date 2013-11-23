@@ -675,125 +675,14 @@ int nilfs_sufile_set_segment_usagev(struct inode *sufile, __u64 *segnumv, __u32 
 }
 
 /**
- * nilfs_sufile_update_range - modify range of segment usages at a time
- * @sufile: inode of segment usage file
- * @start: starting segnum (inclusive)
- * @end: ending segnum (inclusive)
- * @create: creation flag
- * @ndone: place to store number of modified segments on @segnumv
- * @dofunc: primitive operation for the update
- *
- * Description: nilfs_sufile_update_range() repeatedly calls @dofunc
- * against the given range of segments.  The @dofunc is called with
- * buffers of a header block and the sufile block in which the target
- * segment usage entry is contained.  If @ndone is given, the number
- * of successfully modified segments from the head is stored in the
- * place @ndone points to.
- *
- * Return Value: On success, zero is returned.  On error, one of the
- * following negative error codes is returned.
- *
- * %-EIO - I/O error.
- *
- * %-ENOMEM - Insufficient amount of memory available.
- *
- * %-ENOENT - Given segment usage is in hole block (may be returned if
- *            @create is zero)
- *
- * %-EINVAL - Invalid segment usage number
- */
-int nilfs_sufile_update_range(struct inode *sufile, __u64 start, __u64 end,
-			 int create, size_t *ndone,
-			 void (*dofunc)(struct inode *, __u64,
-					struct buffer_head *,
-					struct buffer_head *))
-{
-	struct buffer_head *header_bh, *bh;
-	unsigned long blkoff, prev_blkoff;
-	__u64 seg;
-	size_t n = 0;
-	int ret = 0;
-
-	if (unlikely(start > end))
-		goto out;
-
-	down_write(&NILFS_MDT(sufile)->mi_sem);
-
-	if(unlikely(end>=nilfs_sufile_get_nsegments(sufile))){
-		ret = -EINVAL;
-		goto out_sem;
-	}
-
-	ret = nilfs_sufile_get_header_block(sufile, &header_bh);
-	if (ret < 0)
-		goto out_sem;
-
-	seg = start;
-	blkoff = nilfs_sufile_get_blkoff(sufile, start);
-	ret = nilfs_mdt_get_block(sufile, blkoff, create, NULL, &bh);
-	if (ret < 0)
-		goto out_header;
-
-	for (;;) {
-		dofunc(sufile, seg, header_bh, bh);
-
-		if (++seg > end)
-			break;
-		prev_blkoff = blkoff;
-		blkoff = nilfs_sufile_get_blkoff(sufile, seg);
-		if (blkoff == prev_blkoff)
-			continue;
-
-		/* get different block */
-		brelse(bh);
-		ret = nilfs_mdt_get_block(sufile, blkoff, create, NULL, &bh);
-		if (unlikely(ret < 0))
-			goto out_header;
-	}
-	brelse(bh);
-
- out_header:
-	brelse(header_bh);
-	n = seg - start;
- out_sem:
-	up_write(&NILFS_MDT(sufile)->mi_sem);
- out:
-	if (ndone)
-		*ndone = n;
-	return ret;
-}
-
-
-void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
-			   struct buffer_head *header_bh,
-			   struct buffer_head *su_bh)
-{
-	struct nilfs_segment_usage *su;
-	void *kaddr;
-
-	kaddr = kmap_atomic(su_bh->b_page);
-	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, su_bh, kaddr);
-	if (su->su_nblocks == cpu_to_le32(0) || nilfs_segment_usage_active(su)
-			|| nilfs_segment_usage_error(su)){
-		kunmap_atomic(kaddr);
-		return;
-	}
-
-	/* set nblocks to 0 */
-	su->su_nblocks = cpu_to_le32(0);
-	kunmap_atomic(kaddr);
-
-	mark_buffer_dirty(su_bh);
-	nilfs_mdt_mark_dirty(sufile);
-}
-
-/**
- * nilfs_sufile_dec_segment_usage - decrement usage of a segment
+ * nilfs_sufile_add_segment_usage - decrement usage of a segment
  * @sufile: inode of segment usage file
  * @segnum: segment number
- * @modtime: last modification time
+ * @value: value to add to su_nblocks
+ * @dectime: current time
  */
-int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, time_t dectime)
+int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
+		int value, __u32 max, time_t dectime)
 {
 	struct buffer_head *bh;
 	struct nilfs_segment_usage *su;
@@ -809,12 +698,13 @@ int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, time_t de
 	kaddr = kmap_atomic(bh->b_page);
 	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, bh, kaddr);
 	WARN_ON(nilfs_segment_usage_error(su));
-	if(su->su_nblocks == le32_to_cpu(0)){
+	if (value == 0 || (value < 0 && su->su_nblocks == cpu_to_le32(0))
+			|| (value > 0 && su->su_nblocks == cpu_to_le32(max))) {
 		kunmap_atomic(kaddr);
 		goto out_brelse;
 	}
 
-	su->su_nblocks = cpu_to_le32(le32_to_cpu(su->su_nblocks) - 1);
+	le32_add_cpu(&su->su_nblocks, value);
 	if (dectime && nilfs_sufile_lastdec_supported(sufile))
 		su->su_lastdec = cpu_to_le64(dectime);
 	kunmap_atomic(kaddr);

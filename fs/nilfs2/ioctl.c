@@ -353,8 +353,7 @@ static int nilfs_ioctl_get_bdescs(struct inode *inode, struct file *filp,
 }
 
 static int nilfs_ioctl_move_inode_block(struct inode *inode,
-					struct nilfs_vdesc *vdesc,
-					struct list_head *buffers)
+					struct nilfs_vdesc *vdesc)
 {
 	struct buffer_head *bh;
 	int ret;
@@ -381,19 +380,7 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 			       (unsigned long long)vdesc->vd_vblocknr);
 		return ret;
 	}
-	if (unlikely(!list_empty(&bh->b_assoc_buffers))) {
-		printk(KERN_CRIT "%s: conflicting %s buffer: ino=%llu, "
-		       "cno=%llu, offset=%llu, blocknr=%llu, vblocknr=%llu\n",
-		       __func__, vdesc->vd_flags ? "node" : "data",
-		       (unsigned long long)vdesc->vd_ino,
-		       (unsigned long long)vdesc->vd_cno,
-		       (unsigned long long)vdesc->vd_offset,
-		       (unsigned long long)vdesc->vd_blocknr,
-		       (unsigned long long)vdesc->vd_vblocknr);
-		brelse(bh);
-		return -EEXIST;
-	}
-	list_add_tail(&bh->b_assoc_buffers, buffers);
+	vdesc->vd_bh = bh;
 	return 0;
 }
 
@@ -404,11 +391,9 @@ static int nilfs_ioctl_move_blocks(struct super_block *sb,
 	struct the_nilfs *nilfs = sb->s_fs_info;
 	struct inode *inode;
 	struct nilfs_vdesc *vdesc;
-	struct buffer_head *bh, *n;
-	LIST_HEAD(buffers);
 	ino_t ino;
 	__u64 cno;
-	int i, ret;
+	int i, j, ret;
 
 	for (i = 0, vdesc = buf; i < nmembs; ) {
 		ino = vdesc->vd_ino;
@@ -430,8 +415,7 @@ static int nilfs_ioctl_move_blocks(struct super_block *sb,
 		}
 
 		do {
-			ret = nilfs_ioctl_move_inode_block(inode, vdesc,
-							   &buffers);
+			ret = nilfs_ioctl_move_inode_block(inode, vdesc);
 			if (unlikely(ret < 0)) {
 				iput(inode);
 				goto failed;
@@ -443,28 +427,30 @@ static int nilfs_ioctl_move_blocks(struct super_block *sb,
 		iput(inode); /* The inode still remains in GC inode list */
 	}
 
-	list_for_each_entry_safe(bh, n, &buffers, b_assoc_buffers) {
-		ret = nilfs_gccache_wait_and_mark_dirty(bh);
+	for (i = 0, vdesc = buf; i < nmembs; ++vdesc, ++i) {
+		ret = nilfs_gccache_wait_and_mark_dirty(vdesc->vd_bh);
 		if (unlikely(ret < 0)) {
 			WARN_ON(ret == -EEXIST);
-			goto failed;
+			goto failed_wait;
 		}
-		list_del_init(&bh->b_assoc_buffers);
-		brelse(bh);
+		brelse(vdesc->vd_bh);
 	}
 	return nmembs;
 
  failed:
-	list_for_each_entry_safe(bh, n, &buffers, b_assoc_buffers) {
-		list_del_init(&bh->b_assoc_buffers);
-		brelse(bh);
+	for (j = 0, vdesc = buf; j < i; ++vdesc, ++j) {
+		brelse(vdesc->vd_bh);
+	}
+	return ret;
+ failed_wait:
+	for (j = i; j < nmembs; ++vdesc, ++j) {
+		brelse(vdesc->vd_bh);
 	}
 	return ret;
 }
 
 static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp, void __user *argp)
 {
-	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
 	__u64 end, offset, blocknr, range[2];
 	int ret;
 	struct buffer_head *bh, *n;
@@ -488,8 +474,6 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 	if (unlikely(ret))
 		goto out;
 
-	/* dat shouldn't change while reading physical blocks */
-	down_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
 	ret = nilfs_bmap_lookup_contig(NILFS_I(inode)->i_bmap, offset, &blocknr, range[1]);
 	if (ret < 0)
 		goto failed;
@@ -500,16 +484,6 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 		if (unlikely(ret < 0))
 			goto failed;
 
-		if (unlikely(!list_empty(&bh->b_assoc_buffers))) {
-			printk(KERN_CRIT "%s: conflicting data buffer: ino=%llu, "
-			"offset=%llu, blocknr=%llu\n", __func__,
-					(unsigned long long) inode->i_ino,
-					(unsigned long long) offset, (unsigned long long) blocknr);
-			brelse(bh);
-			ret = -EEXIST;
-			goto failed;
-		}
-
 		list_add_tail(&bh->b_assoc_buffers, &buffers);
 		blocknr++;
 	}
@@ -519,7 +493,7 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 		/* -EEXIST means it is already marked dirty */
 		if (ret == -EEXIST)
 			ret = 0;
-		if (unlikely(ret < 0))
+		else if (unlikely(ret < 0))
 			goto failed;
 
 		list_del_init(&bh->b_assoc_buffers);
@@ -528,8 +502,6 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 
 	nilfs_set_file_dirty(inode, 1 << (PAGE_SHIFT - inode->i_blkbits));
 
-
-	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
 	nilfs_transaction_commit(inode->i_sb);
   out:
   	mnt_drop_write_file(filp);
@@ -539,7 +511,6 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 		list_del_init(&bh->b_assoc_buffers);
 		brelse(bh);
 	}
-	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
 	nilfs_transaction_abort(inode->i_sb);
 	mnt_drop_write_file(filp);
 	return ret;

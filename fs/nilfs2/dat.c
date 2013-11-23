@@ -98,6 +98,7 @@ void nilfs_dat_commit_alloc(struct inode *dat, struct nilfs_palloc_req *req)
 	entry->de_start = cpu_to_le64(NILFS_CNO_MIN);
 	entry->de_end = cpu_to_le64(NILFS_CNO_MAX);
 	entry->de_blocknr = cpu_to_le64(0);
+	entry->de_rsv = cpu_to_le64(0);
 	kunmap_atomic(kaddr);
 
 	nilfs_palloc_commit_alloc_entry(dat, req);
@@ -122,6 +123,7 @@ static void nilfs_dat_commit_free(struct inode *dat,
 	entry->de_start = cpu_to_le64(NILFS_CNO_MIN);
 	entry->de_end = cpu_to_le64(NILFS_CNO_MIN);
 	entry->de_blocknr = cpu_to_le64(0);
+	entry->de_rsv = cpu_to_le64(0);
 	kunmap_atomic(kaddr);
 
 	nilfs_dat_commit_entry(dat, req);
@@ -213,7 +215,9 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 
 		if (!dead && count_blocks) {
 			nilfs =  dat->i_sb->s_fs_info;
-			nilfs_sufile_dec_segment_usage(nilfs->ns_sufile, nilfs_get_segnum_of_block(nilfs, blocknr), nilfs->ns_ctime);
+			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+					nilfs_get_segnum_of_block(nilfs, blocknr), -1,
+					nilfs->ns_blocks_per_segment, nilfs->ns_ctime);
 		}
 	}
 }
@@ -373,6 +377,7 @@ int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr)
 	}
 	WARN_ON(blocknr == 0);
 	entry->de_blocknr = cpu_to_le64(blocknr);
+	entry->de_rsv = cpu_to_le64(0);
 	kunmap_atomic(kaddr);
 
 	mark_buffer_dirty(entry_bh);
@@ -489,6 +494,81 @@ int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr)
 	kunmap_atomic(kaddr);
 	brelse(entry_bh);
 	return ret;
+}
+
+void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req, void *data)
+{
+	struct nilfs_dat_entry *entry;
+	__u64 start, end, ss, *ssp = data, already_inc;
+	sector_t blocknr;
+	void *kaddr;
+	struct the_nilfs *nilfs;
+
+	ss = *ssp;
+
+	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
+	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
+					     req->pr_entry_bh, kaddr);
+	start = le64_to_cpu(entry->de_start);
+	end = le64_to_cpu(entry->de_end);
+	blocknr = le64_to_cpu(entry->de_blocknr);
+	already_inc = le64_to_cpu(entry->de_rsv);
+
+	if (blocknr != 0 && end != cpu_to_le64(NILFS_CNO_MAX)
+			&& ss >= start && ss < end) {
+		nilfs =  dat->i_sb->s_fs_info;
+		nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+				nilfs_get_segnum_of_block(nilfs, blocknr), -1,
+				nilfs->ns_blocks_per_segment, 0);
+
+		if (already_inc) {
+			entry->de_rsv = cpu_to_le64(0);
+
+			kunmap_atomic(kaddr);
+			mark_buffer_dirty(req->pr_entry_bh);
+			nilfs_mdt_mark_dirty(dat);
+			return;
+		}
+	}
+
+	kunmap_atomic(kaddr);
+}
+
+void nilfs_dat_do_scan_inc(struct inode *dat, struct nilfs_palloc_req *req, void *data)
+{
+	struct nilfs_dat_entry *entry;
+	__u64 start, end, ss, *ssp = data, already_inc;
+	sector_t blocknr;
+	void *kaddr;
+	struct the_nilfs *nilfs;
+
+	ss = *ssp;
+
+	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
+	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
+					     req->pr_entry_bh, kaddr);
+	start = le64_to_cpu(entry->de_start);
+	end = le64_to_cpu(entry->de_end);
+	blocknr = le64_to_cpu(entry->de_blocknr);
+	already_inc = le64_to_cpu(entry->de_rsv);
+
+
+	if (blocknr != 0 && end != cpu_to_le64(NILFS_CNO_MAX)
+			&& ss >= start && ss < end && already_inc != 1) {
+		nilfs =  dat->i_sb->s_fs_info;
+		nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+				nilfs_get_segnum_of_block(nilfs, blocknr), 1,
+				nilfs->ns_blocks_per_segment, 0);
+
+		entry->de_rsv = cpu_to_le64(1);
+
+		kunmap_atomic(kaddr);
+		mark_buffer_dirty(req->pr_entry_bh);
+		nilfs_mdt_mark_dirty(dat);
+		return;
+	}
+
+	kunmap_atomic(kaddr);
 }
 
 ssize_t nilfs_dat_get_vinfo(struct inode *dat, void *buf, unsigned visz,

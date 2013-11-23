@@ -81,29 +81,9 @@ int nilfs_sufile_resize(struct inode *sufile, __u64 newnsegs);
 int nilfs_sufile_read(struct super_block *sb, size_t susize,
 		      struct nilfs_inode *raw_inode, struct inode **inodep);
 
-int nilfs_sufile_update_range(struct inode *sufile, __u64 start, __u64 end,
-			 int create, size_t *ndone,
-			 void (*dofunc)(struct inode *, __u64,
-					struct buffer_head *,
-					struct buffer_head *));
+int nilfs_sufile_add_segment_usage(struct inode *, __u64, int, __u32, time_t);
 
-void nilfs_sufile_do_zero_nblocks(struct inode *sufile, __u64 segnum,
-			   struct buffer_head *header_bh,
-			   struct buffer_head *su_bh);
-
-int nilfs_sufile_dec_segment_usage(struct inode *sufile, __u64 segnum, time_t dectime);
-
-int nilfs_sufile_set_segment_usagev(struct inode *sufile, __u64 *, __u32 *, __u64 *, size_t);
-
-/**
- * nilfs_sufile_zero_nblocks - set su_nblocks to 0 for all segments
- * @sufile: inode of segment usage file
- */
-static inline int nilfs_sufile_zero_nblocks(struct inode *sufile) {
-	return nilfs_sufile_update_range(sufile, 0,
-			nilfs_sufile_get_nsegments(sufile) - 1, 0, NULL,
-			nilfs_sufile_do_zero_nblocks);
-}
+int nilfs_sufile_set_segment_usagev(struct inode *, __u64 *, __u32 *, __u64 *, size_t);
 
 /**
  * nilfs_sufile_scrap - make a segment garbage

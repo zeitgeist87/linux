@@ -817,7 +817,10 @@ struct nilfs_vdesc {
 	__u64 vd_ino;
 	__u64 vd_cno;
 	__u64 vd_vblocknr;
-	struct nilfs_period vd_period;
+	union {
+		struct nilfs_period vd_period;
+		struct buffer_head *vd_bh;
+	};
 	__u64 vd_blocknr;
 	__u64 vd_offset;
 	__u32 vd_flags;
