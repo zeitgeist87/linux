@@ -358,7 +358,7 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 	struct buffer_head *bh;
 	int ret;
 
-	if (vdesc->vd_flags == 0)
+	if (nilfs_vdesc_data(vdesc))
 		ret = nilfs_gccache_submit_read_data(
 			inode, vdesc->vd_offset, vdesc->vd_blocknr,
 			vdesc->vd_vblocknr, &bh);
@@ -372,7 +372,7 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 			       "%s: invalid virtual block address (%s): "
 			       "ino=%llu, cno=%llu, offset=%llu, "
 			       "blocknr=%llu, vblocknr=%llu\n",
-			       __func__, vdesc->vd_flags ? "node" : "data",
+			       __func__, nilfs_vdesc_node(vdesc) ? "node" : "data",
 			       (unsigned long long)vdesc->vd_ino,
 			       (unsigned long long)vdesc->vd_cno,
 			       (unsigned long long)vdesc->vd_offset,
@@ -380,6 +380,11 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 			       (unsigned long long)vdesc->vd_vblocknr);
 		return ret;
 	}
+
+	if (nilfs_vdesc_snapshot(vdesc))
+		set_buffer_nilfs_snapshot(bh);
+	if (nilfs_vdesc_protection_period(vdesc))
+		set_buffer_nilfs_protection_period(bh);
 	vdesc->vd_bh = bh;
 	return 0;
 }

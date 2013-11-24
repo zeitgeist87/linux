@@ -1520,7 +1520,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			count_blocks = !test_bit(NILFS_I_GCINODE, &ii->i_state);
 			dectime = sci->sc_seg_ctime;
 			/* no update of lastdec necessary */
-			if (ino == NILFS_DAT_INO || ino == NILFS_SUFILE_INO || ino == NILFS_CPFILE_INO)
+			if (ino == NILFS_DAT_INO || ino == NILFS_SUFILE_INO
+					|| ino == NILFS_CPFILE_INO)
 				dectime = 0;
 
 			if (mode == SC_LSEG_DSYNC)
@@ -1531,7 +1532,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
-		if(count_blocks && bh->b_blocknr > 0 && (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
+		if (count_blocks && bh->b_blocknr > 0
+				&& (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
 			segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
 
 			if (segnum < nilfs->ns_nsegments) {
@@ -1546,8 +1548,10 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 		}
 
 		/* check again if gc blocks are alive and adjust counter */
-		if(!count_blocks && bh->b_blocknr > 0) {
-			if (!nilfs_dat_is_live(nilfs->ns_dat, bh->b_blocknr)){
+		if (!count_blocks && bh->b_blocknr > 0) {
+			if (!buffer_nilfs_snapshot(bh)
+					&& (buffer_nilfs_protection_period(bh)
+							|| !nilfs_dat_is_live(nilfs->ns_dat, bh->b_blocknr))) {
 				segbuf->sb_su_blocks--;
 			}
 		}
