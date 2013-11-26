@@ -459,6 +459,7 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 	__u64 end, offset, blocknr, range[2];
 	int ret;
 	struct buffer_head *bh, *n;
+	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
 	LIST_HEAD(buffers);
 	struct nilfs_transaction_info ti;
 
@@ -479,19 +480,22 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 	if (unlikely(ret))
 		goto out;
 
+	down_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
+
 	ret = nilfs_bmap_lookup_contig(NILFS_I(inode)->i_bmap, offset, &blocknr, range[1]);
 	if (ret < 0)
 		goto failed;
 
-	for (end = offset + ret; offset < end; offset++){
+	for (end = offset + ret; offset < end; ++offset, ++blocknr){
 		ret = nilfs_gccache_submit_read_data(
 				inode, offset, blocknr, 0, &bh);
 		if (unlikely(ret < 0))
 			goto failed;
 
 		list_add_tail(&bh->b_assoc_buffers, &buffers);
-		blocknr++;
 	}
+
+	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
 
 	list_for_each_entry_safe(bh, n, &buffers, b_assoc_buffers) {
 		ret = nilfs_gccache_wait_and_mark_dirty(bh);
@@ -499,7 +503,7 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 		if (ret == -EEXIST)
 			ret = 0;
 		else if (unlikely(ret < 0))
-			goto failed;
+			goto failed_wait;
 
 		list_del_init(&bh->b_assoc_buffers);
 		brelse(bh);
@@ -508,10 +512,12 @@ static int nilfs_ioctl_mark_extent_dirty(struct inode *inode, struct file *filp,
 	nilfs_set_file_dirty(inode, 1 << (PAGE_SHIFT - inode->i_blkbits));
 
 	nilfs_transaction_commit(inode->i_sb);
-  out:
+ out:
   	mnt_drop_write_file(filp);
 	return ret;
-  failed:
+ failed:
+	up_read(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
+ failed_wait:
 	list_for_each_entry_safe(bh, n, &buffers, b_assoc_buffers) {
 		list_del_init(&bh->b_assoc_buffers);
 		brelse(bh);
