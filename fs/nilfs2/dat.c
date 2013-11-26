@@ -517,18 +517,17 @@ void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req, void
 	if (blocknr != 0 && end != cpu_to_le64(NILFS_CNO_MAX)
 			&& ss >= start && ss < end && (prev_ss == 0 || prev_ss == ss)) {
 
-		if (prev_ss) {
-			entry->de_rsv = cpu_to_le64(0);
-		}
-
 		/*
 		 * exit atomic context before call to
 		 * nilfs_sufile_add_segment_usage
 		 */
-		kunmap_atomic(kaddr);
 		if (prev_ss) {
+			entry->de_rsv = cpu_to_le64(0);
+			kunmap_atomic(kaddr);
 			mark_buffer_dirty(req->pr_entry_bh);
 			nilfs_mdt_mark_dirty(dat);
+		} else {
+			kunmap_atomic(kaddr);
 		}
 
 		nilfs =  dat->i_sb->s_fs_info;
