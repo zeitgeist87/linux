@@ -596,6 +596,92 @@ static int nilfs_ioctl_mark_blocks_dirty(struct the_nilfs *nilfs,
 	return nmembs;
 }
 
+static int nilfs_ioctl_update_segment_usage(struct super_block *sb,
+				   struct nilfs_argv argv[5], void *bufs[5])
+{
+	size_t nmembs = argv[0].v_nmembs;
+	struct the_nilfs *nilfs = sb->s_fs_info;
+	struct inode *sufile = nilfs->ns_sufile,
+				 *datfile = nilfs->ns_dat;
+	struct nilfs_vdesc *vdesc = bufs[0];
+	struct nilfs_bmap *bmap = NILFS_I(datfile)->i_bmap;
+	struct nilfs_bdesc *bdesc;
+	__u64 segnum = 0, *segnums;
+	__u32 blkcount;
+	int i, ret;
+	struct nilfs_transaction_info ti;
+
+	ret = nilfs_transaction_begin(sb, &ti, 0);
+	if (unlikely(ret))
+		return ret;
+
+	/* reset usage counts to 0 */
+	nmembs = argv[4].v_nmembs;
+	for (i = 0, segnums = bufs[4]; i < nmembs; ++i) {
+		ret = nilfs_sufile_set_segment_usage(sufile, segnums[i], 0, nilfs->ns_ctime);
+		if (unlikely(ret < 0))
+			goto failure;
+	}
+
+	nmembs = argv[0].v_nmembs;
+	blkcount = 0;
+	if (nmembs > 0)
+		segnum = nilfs_get_segnum_of_block(nilfs, vdesc->vd_blocknr);
+	for (i = 0, vdesc = bufs[0]; i < nmembs; ++i, ++vdesc) {
+		if (segnum != nilfs_get_segnum_of_block(nilfs, vdesc->vd_blocknr)) {
+			ret = nilfs_sufile_add_segment_usage(sufile, segnum, blkcount, nilfs->ns_blocks_per_segment, 0);
+			if (unlikely(ret < 0))
+				goto failure;
+			segnum = nilfs_get_segnum_of_block(nilfs, vdesc->vd_blocknr);
+			blkcount = 0;
+		}
+
+		if (nilfs_vdesc_snapshot(vdesc)
+				|| (!nilfs_vdesc_protection_period(vdesc)
+						&& !!nilfs_dat_is_live(datfile, vdesc->vd_vblocknr)))
+			++blkcount;
+
+		if (nilfs_vdesc_snapshot(vdesc))
+			nilfs_dat_check_snapshot_flag(datfile, vdesc->vd_vblocknr);
+	}
+
+	nmembs = argv[3].v_nmembs;
+	for (i = 0, bdesc = bufs[3]; i < nmembs; ++i, ++bdesc) {
+		if (segnum != nilfs_get_segnum_of_block(nilfs, bdesc->bd_oblocknr)) {
+			ret = nilfs_sufile_add_segment_usage(sufile, segnum, blkcount, nilfs->ns_blocks_per_segment, 0);
+			if (unlikely(ret < 0))
+				goto failure;
+			segnum = nilfs_get_segnum_of_block(nilfs, bdesc->bd_oblocknr);
+			blkcount = 0;
+		}
+
+		ret = nilfs_bmap_lookup_at_level(bmap,
+						 bdesc->bd_offset,
+						 bdesc->bd_level + 1,
+						 &bdesc->bd_blocknr);
+		if (ret < 0) {
+			if (ret != -ENOENT)
+				goto failure;
+			bdesc->bd_blocknr = 0;
+		}
+		if (bdesc->bd_blocknr == bdesc->bd_oblocknr)
+			++blkcount;
+	}
+
+	if (blkcount) {
+		ret = nilfs_sufile_add_segment_usage(sufile, segnum, blkcount, nilfs->ns_blocks_per_segment, 0);
+		if (unlikely(ret < 0))
+			goto failure;
+	}
+
+	nilfs_transaction_commit(sb);
+	return ret;
+
+ failure:
+ 	nilfs_transaction_abort(sb);
+	return ret;
+}
+
 int nilfs_ioctl_prepare_clean_segments(struct the_nilfs *nilfs,
 				       struct nilfs_argv *argv, void **kbufs)
 {
@@ -725,6 +811,12 @@ static int nilfs_ioctl_clean_segments(struct inode *inode, struct file *filp,
 		goto out_free;
 	}
 
+	if (argv[0].v_flags != 0) {
+		/* only update segment usage */
+		nilfs_ioctl_update_segment_usage(inode->i_sb, argv, kbufs);
+		goto out_free;
+	}
+
 	ret = nilfs_ioctl_move_blocks(inode->i_sb, &argv[0], kbufs[0]);
 	if (ret < 0)
 		printk(KERN_ERR "NILFS: GC failed during preparation: "
@@ -743,100 +835,6 @@ out_free:
 		vfree(kbufs[n]);
 	kfree(kbufs[4]);
 out:
-	mnt_drop_write_file(filp);
-	return ret;
-}
-
-static int nilfs_ioctl_set_suinfo(struct inode *inode, struct file *filp,
-				      unsigned int cmd, void __user *argp)
-{
-	struct nilfs_argv argv[3];
-	void *kbufs[3];
-	struct the_nilfs *nilfs;
-	size_t nsegs;
-	int ret;
-	struct nilfs_transaction_info ti;
-
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	ret = mnt_want_write_file(filp);
-	if (ret)
-		return ret;
-
-	ret = -EFAULT;
-	if (copy_from_user(argv, argp, sizeof(argv)))
-		goto out;
-
-	ret = -EINVAL;
-	nsegs = argv[0].v_nmembs;
-
-	if (argv[0].v_size != sizeof(__u64)
-			|| argv[1].v_size != sizeof(__u32)
-			|| argv[2].v_size != sizeof(__u64))
-		goto out;
-	if (nsegs > UINT_MAX / sizeof(__u64))
-		goto out;
-	if (argv[1].v_nmembs != nsegs || argv[2].v_nmembs != nsegs)
-		goto out;
-	if (argv[1].v_base == 0 && argv[2].v_base == 0)
-		goto out;
-
-	/*
-	 * argv points to segment numbers.  We
-	 * use kmalloc() for its buffer because memory used for the
-	 * segment numbers is enough small.
-	 */
-	kbufs[0] = memdup_user((void __user *)(unsigned long)argv[0].v_base,
-			       nsegs * sizeof(__u64));
-	if (IS_ERR(kbufs[0])) {
-		ret = PTR_ERR(kbufs[0]);
-		goto out;
-	}
-
-	kbufs[1] = NULL;
-	kbufs[2] = NULL;
-
-	if (argv[1].v_base) {
-		kbufs[1] = memdup_user((void __user *)(unsigned long)argv[1].v_base,
-					   nsegs * sizeof(__u32));
-		if (IS_ERR(kbufs[1])) {
-			ret = PTR_ERR(kbufs[1]);
-			goto out_free;
-		}
-	}
-
-	if (argv[2].v_base) {
-		kbufs[2] = memdup_user((void __user *)(unsigned long)argv[2].v_base,
-					   nsegs * sizeof(__u64));
-		if (IS_ERR(kbufs[2])) {
-			ret = PTR_ERR(kbufs[2]);
-			goto out_free2;
-		}
-	}
-	nilfs = inode->i_sb->s_fs_info;
-
-	ret = nilfs_transaction_begin(inode->i_sb, &ti, 1);
-	if (unlikely(ret))
-		goto out_trans;
-
-	ret = nilfs_sufile_set_segment_usagev(nilfs->ns_sufile, kbufs[0], kbufs[1], kbufs[2], nsegs);
-
-	if(likely(!ret))
-		nilfs_transaction_commit(inode->i_sb);
-	else
-		nilfs_transaction_abort(inode->i_sb);
-
-  out_trans:
-	if (kbufs[2])
-		kfree(kbufs[2]);
-  out_free2:
-	if (kbufs[1])
-		kfree(kbufs[1]);
-  out_free:
-	kfree(kbufs[0]);
-  out:
 	mnt_drop_write_file(filp);
 	return ret;
 }
@@ -979,8 +977,6 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_info(inode, filp, cmd, argp,
 					    sizeof(struct nilfs_suinfo),
 					    nilfs_ioctl_do_get_suinfo);
-	case NILFS_IOCTL_SET_SUINFO:
-		return nilfs_ioctl_set_suinfo(inode, filp, cmd, argp);
 	case NILFS_IOCTL_GET_SUSTAT:
 		return nilfs_ioctl_get_sustat(inode, filp, cmd, argp);
 	case NILFS_IOCTL_GET_VINFO:
@@ -1022,7 +1018,6 @@ long nilfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case NILFS_IOCTL_GET_CPINFO:
 	case NILFS_IOCTL_GET_CPSTAT:
 	case NILFS_IOCTL_GET_SUINFO:
-	case NILFS_IOCTL_SET_SUINFO:
 	case NILFS_IOCTL_GET_SUSTAT:
 	case NILFS_IOCTL_GET_VINFO:
 	case NILFS_IOCTL_GET_BDESCS:

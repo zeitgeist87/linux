@@ -792,7 +792,7 @@ static int nilfs_cpfile_clear_snapshot(struct inode *cpfile, __u64 cno)
 	nilfs_mdt_mark_dirty(cpfile);
 
 	down_write(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
-	nilfs_dat_scan_dec_ss(nilfs->ns_dat, cno);
+	nilfs_dat_scan_dec_ss(nilfs->ns_dat, cno, prev, next);
 	up_write(&NILFS_MDT(nilfs->ns_dat)->mi_sem);
 
 	brelse(prev_bh);

@@ -83,8 +83,6 @@ int nilfs_sufile_read(struct super_block *sb, size_t susize,
 
 int nilfs_sufile_add_segment_usage(struct inode *, __u64, int, __u32, time_t);
 
-int nilfs_sufile_set_segment_usagev(struct inode *, __u64 *, __u32 *, __u64 *, size_t);
-
 /**
  * nilfs_sufile_scrap - make a segment garbage
  * @sufile: inode of segment usage file
