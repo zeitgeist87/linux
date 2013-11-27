@@ -81,7 +81,7 @@ int nilfs_sufile_resize(struct inode *sufile, __u64 newnsegs);
 int nilfs_sufile_read(struct super_block *sb, size_t susize,
 		      struct nilfs_inode *raw_inode, struct inode **inodep);
 
-int nilfs_sufile_add_segment_usage(struct inode *, __u64, int, __u32, time_t);
+int nilfs_sufile_add_segment_usage(struct inode *, __u64, __s64, __u32, time_t);
 
 /**
  * nilfs_sufile_scrap - make a segment garbage

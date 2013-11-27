@@ -1495,7 +1495,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
 	int count_blocks = 0, err = 0;
-	__u64 segnum, dectime = 0;
+	__u64 segnum, curr_segnum = 0, dectime = 0, maxdectime = 0;
+	__u32 blkcount = 0;
 
 	if (!nfinfo)
 		goto out;
@@ -1524,6 +1525,9 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 					|| ino == NILFS_CPFILE_INO)
 				dectime = 0;
 
+			if (dectime > maxdectime)
+				maxdectime = dectime;
+
 			if (mode == SC_LSEG_DSYNC)
 				sc_op = &nilfs_sc_dsync_ops;
 			else if (ino == NILFS_DAT_INO)
@@ -1532,18 +1536,26 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
+		segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
 		if (count_blocks && bh->b_blocknr > 0
-				&& (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))) {
-			segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
+				&& (ino == NILFS_DAT_INO || !buffer_nilfs_node(bh))
+				&& segnum < nilfs->ns_nsegments) {
 
-			if (segnum < nilfs->ns_nsegments) {
-
-				if (segnum == segbuf->sb_segnum) {
-					segbuf->sb_su_blocks--;
-				} else {
-					nilfs_sufile_add_segment_usage(nilfs->ns_sufile, segnum, -1,
-							nilfs->ns_blocks_per_segment, dectime);
+			if (curr_segnum != segnum) {
+				if (blkcount) {
+					nilfs_sufile_add_segment_usage(nilfs->ns_sufile, curr_segnum, -blkcount,
+							nilfs->ns_blocks_per_segment, maxdectime);
 				}
+				curr_segnum = segnum;
+				blkcount = 0;
+				maxdectime = dectime;
+			}
+
+
+			if (curr_segnum == segbuf->sb_segnum) {
+				segbuf->sb_su_blocks--;
+			} else {
+				++blkcount;
 			}
 		}
 
@@ -1578,6 +1590,11 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				break;
 		} else if (ndatablk > 0)
 			ndatablk--;
+	}
+
+	if (blkcount) {
+		nilfs_sufile_add_segment_usage(nilfs->ns_sufile, curr_segnum, -blkcount,
+				nilfs->ns_blocks_per_segment, maxdectime);
 	}
  out:
 	return 0;

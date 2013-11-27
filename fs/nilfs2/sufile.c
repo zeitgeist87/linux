@@ -562,7 +562,7 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
  * 										 2 - abort if modified
  */
 int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
-		int value, __u32 max, time_t dectime)
+		__s64 value, __u32 max, time_t dectime)
 {
 	struct buffer_head *bh;
 	struct nilfs_segment_usage *su;
