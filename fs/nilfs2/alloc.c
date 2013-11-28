@@ -615,6 +615,8 @@ int nilfs_palloc_scan_entries(struct inode *inode,
 										 0, &req.pr_entry_bh);
 							if (ret < 0)
 								goto out_entry;
+
+							blkoff = nilfs_palloc_entry_blkoff(inode, req.pr_entry_nr);
 						}
 
 						dofunc(inode, &req, data);
