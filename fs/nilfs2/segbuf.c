@@ -470,9 +470,9 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 
 	len = bio_add_page(wi->bio, bh->b_page, bh->b_size, bh_offset(bh));
 	if (len == bh->b_size) {
-		lock_bh(bh);
+		lock_buffer(bh);
 		map_bh(bh, segbuf->sb_super, wi->blocknr + wi->end);
-		unlock_bh(bh);
+		unlock_buffer(bh);
 		wi->end++;
 		return 0;
 	}
