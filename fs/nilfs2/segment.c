@@ -1544,7 +1544,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			if (curr_segnum != segnum) {
 				if (blkcount) {
 					printk(KERN_CRIT "ADD: %u\n", blkcount);
-					nilfs_sufile_add_segment_usage(nilfs->ns_sufile, curr_segnum, -blkcount,
+					nilfs_sufile_add_segment_usage(nilfs->ns_sufile, curr_segnum, -((__s64)blkcount),
 							nilfs->ns_blocks_per_segment, maxdectime);
 				}
 				curr_segnum = segnum;
@@ -1595,7 +1595,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 	if (blkcount) {
 		printk(KERN_CRIT "ADD2: %u\n", blkcount);
-		nilfs_sufile_add_segment_usage(nilfs->ns_sufile, curr_segnum, -blkcount,
+		nilfs_sufile_add_segment_usage(nilfs->ns_sufile, curr_segnum, -((__s64)blkcount),
 				nilfs->ns_blocks_per_segment, maxdectime);
 	}
  out:
