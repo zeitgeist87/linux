@@ -556,10 +556,6 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
  * @segnum: segment number
  * @value: value to add to su_nblocks
  * @dectime: current time
- * @check_mod_by_user: check the flags if the nblocks value was modified
- * 						from user space: 0 - ignore
- * 										 1 - abort if not modified
- * 										 2 - abort if modified
  */
 int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
 		__s64 value, __u32 max, time_t dectime)
@@ -568,6 +564,9 @@ int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
 	struct nilfs_segment_usage *su;
 	void *kaddr;
 	int ret;
+
+	if (value == 0)
+		return 0;
 
 	down_write(&NILFS_MDT(sufile)->mi_sem);
 
@@ -578,13 +577,19 @@ int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
 	kaddr = kmap_atomic(bh->b_page);
 	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, bh, kaddr);
 	WARN_ON(nilfs_segment_usage_error(su));
-	if (value == 0 || (value < 0 && su->su_nblocks == cpu_to_le32(0))
-			|| (value > 0 && su->su_nblocks == cpu_to_le32(max))) {
+
+	value += le32_to_cpu(su->su_nblocks);
+	if (value < 0)
+		value = 0;
+	if (value > max)
+		value = max;
+
+	if (value == le32_to_cpu(su->su_nblocks)) {
 		kunmap_atomic(kaddr);
 		goto out_brelse;
 	}
 
-	le32_add_cpu(&su->su_nblocks, value);
+	su->su_nblocks = cpu_to_le32(value);
 	if (dectime && nilfs_sufile_lastdec_supported(sufile))
 		su->su_lastdec = cpu_to_le64(dectime);
 	kunmap_atomic(kaddr);
