@@ -594,7 +594,7 @@ void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req, void
 			kunmap_atomic(kaddr);
 		}
 
-		if (prev_ss == 0 || prev_ss == NILFS_CNO_MAX) {
+		if (prev_ss == 0) {
 			nilfs = dat->i_sb->s_fs_info;
 			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
 					nilfs_get_segnum_of_block(nilfs, blocknr), -1,
