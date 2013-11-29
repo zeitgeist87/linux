@@ -579,10 +579,14 @@ int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
 	WARN_ON(nilfs_segment_usage_error(su));
 
 	value += le32_to_cpu(su->su_nblocks);
-	if (value < 0)
+	if (value < 0){
+		printk(KERN_CRIT "SMALLER_ZERO: %lld %llu %llu %u\n", value, segnum, dectime, le32_to_cpu(su->su_nblocks));
 		value = 0;
-	if (value > max)
+	}
+	if (value > max){
+		printk(KERN_CRIT "BIGGER_MAX: %lld %llu %llu %u\n", value, segnum, dectime, le32_to_cpu(su->su_nblocks));
 		value = max;
+	}
 
 	if (value == le32_to_cpu(su->su_nblocks)) {
 		kunmap_atomic(kaddr);
