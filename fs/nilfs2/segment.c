@@ -33,7 +33,7 @@
 #include <linux/crc32.h>
 #include <linux/pagevec.h>
 #include <linux/slab.h>
-#include <linux/hot_tracking.h>
+#include "../hot_tracking.h"
 #include "nilfs.h"
 #include "btnode.h"
 #include "page.h"
@@ -1919,7 +1919,7 @@ static void nilfs_segctor_insert_by_temp(struct nilfs_sc_info *sci,
 		struct nilfs_inode_info *ii)
 {
 	struct nilfs_inode_info *ii2;
-	struct inode *inode = ii->vfs_inode;
+	struct inode *inode = &ii->vfs_inode;
 	struct hot_info *root = inode->i_sb->s_hot_root;
 	struct hot_inode_item *he;
 
