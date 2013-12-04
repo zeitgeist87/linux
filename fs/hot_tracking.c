@@ -341,6 +341,7 @@ struct hot_inode_item
 
 	return ERR_PTR(-ENOENT);
 }
+EXPORT_SYMBOL(hot_inode_item_lookup);
 
 void hot_inode_item_unlink(struct inode *inode)
 {
@@ -501,6 +502,7 @@ u32 hot_temp_calc(struct hot_freq *freq)
 
 	return result;
 }
+EXPORT_SYMBOL(hot_temp_calc);
 
 static unsigned long hot_item_evict(struct hot_info *root, unsigned long work,
 			unsigned long (*work_get)(struct hot_info *root))
