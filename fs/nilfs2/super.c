@@ -479,6 +479,9 @@ static void nilfs_put_super(struct super_block *sb)
 {
 	struct the_nilfs *nilfs = sb->s_fs_info;
 
+	if (nilfs_test_opt(nilfs, HOT_TRACK))
+		hot_track_exit(sb);
+
 	nilfs_detach_log_writer(sb);
 
 	if (!(sb->s_flags & MS_RDONLY)) {

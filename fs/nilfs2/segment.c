@@ -1931,6 +1931,10 @@ static void nilfs_segctor_insert_by_temp(struct nilfs_sc_info *sci,
 	} else {
 		ii->i_temp = hot_temp_calc(&he->freq);
 
+		spin_lock(&root->t_lock);
+		hot_inode_item_put(he);
+		spin_unlock(&root->t_lock);
+
 		list_for_each_entry(ii2, &sci->sc_dirty_files, i_dirty) {
 			if (ii2->i_temp > ii->i_temp) {
 				list_move_tail(&ii->i_dirty, &ii2->i_dirty);
