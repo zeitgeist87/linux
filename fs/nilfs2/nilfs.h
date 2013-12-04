@@ -56,6 +56,7 @@ struct nilfs_inode_info {
 	__u64 i_xattr;	/* sector_t ??? */
 	__u32 i_dir_start_lookup;
 	__u64 i_cno;		/* check point number for GC inode */
+	__u32 i_temp;		/* last temperature (hot tracking) */
 	struct address_space i_btnode_cache;
 	struct list_head i_dirty;	/* List for connecting dirty files */
 

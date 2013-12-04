@@ -135,6 +135,7 @@ struct nilfs_super_root {
 #define NILFS_MOUNT_NORECOVERY		0x4000  /* Disable write access during
 						   mount-time recovery */
 #define NILFS_MOUNT_DISCARD		0x8000  /* Issue DISCARD requests */
+#define NILFS_MOUNT_HOT_TRACK		0x10000  /* Use hot tracking */
 
 
 /**

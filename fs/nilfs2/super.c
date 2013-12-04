@@ -48,6 +48,7 @@
 #include <linux/writeback.h>
 #include <linux/seq_file.h>
 #include <linux/mount.h>
+#include <linux/hot_tracking.h>
 #include "nilfs.h"
 #include "export.h"
 #include "mdt.h"
@@ -691,6 +692,8 @@ static int nilfs_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_puts(seq, ",norecovery");
 	if (nilfs_test_opt(nilfs, DISCARD))
 		seq_puts(seq, ",discard");
+	if (nilfs_test_opt(nilfs, HOT_TRACK))
+		seq_puts(seq, ",hot_track");
 
 	return 0;
 }
@@ -712,7 +715,7 @@ static const struct super_operations nilfs_sops = {
 enum {
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_barrier, Opt_nobarrier, Opt_snapshot, Opt_order, Opt_norecovery,
-	Opt_discard, Opt_nodiscard, Opt_err,
+	Opt_discard, Opt_nodiscard, Opt_err, Opt_hot_track,
 };
 
 static match_table_t tokens = {
@@ -726,6 +729,7 @@ static match_table_t tokens = {
 	{Opt_norecovery, "norecovery"},
 	{Opt_discard, "discard"},
 	{Opt_nodiscard, "nodiscard"},
+	{Opt_hot_track, "hot_track"},
 	{Opt_err, NULL}
 };
 
@@ -786,6 +790,9 @@ static int parse_options(char *options, struct super_block *sb, int is_remount)
 			break;
 		case Opt_nodiscard:
 			nilfs_clear_opt(nilfs, DISCARD);
+			break;
+		case Opt_hot_track:
+			nilfs_set_opt(nilfs, HOT_TRACK);
 			break;
 		default:
 			printk(KERN_ERR
@@ -1097,6 +1104,12 @@ nilfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_segctor;
 
 	nilfs_put_root(fsroot);
+
+	if (nilfs_test_opt(nilfs, HOT_TRACK)) {
+		err = hot_track_init(sb);
+		if (err)
+			goto failed_segctor;
+	}
 
 	if (!(sb->s_flags & MS_RDONLY)) {
 		down_write(&nilfs->ns_sem);

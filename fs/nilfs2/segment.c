@@ -33,6 +33,7 @@
 #include <linux/crc32.h>
 #include <linux/pagevec.h>
 #include <linux/slab.h>
+#include <linux/hot_tracking.h>
 #include "nilfs.h"
 #include "btnode.h"
 #include "page.h"
@@ -1914,6 +1915,33 @@ static int nilfs_segctor_wait(struct nilfs_sc_info *sci)
 	return ret;
 }
 
+static void nilfs_segctor_insert_by_temp(struct nilfs_sc_info *sci,
+		struct nilfs_inode_info *ii)
+{
+	struct nilfs_inode_info *ii2;
+	struct inode *inode = ii->vfs_inode;
+	struct hot_info *root = inode->i_sb->s_hot_root;
+	struct hot_inode_item *he;
+
+	he = hot_inode_item_lookup(root, inode->i_ino);
+	if (IS_ERR(he)) {
+		/* we don't have any info on this file yet */
+		ii->i_temp = (~(__u32)0);
+		list_move_tail(&ii->i_dirty, &sci->sc_dirty_files);
+	} else {
+		ii->i_temp = hot_temp_calc(&he->freq);
+
+		list_for_each_entry(ii2, &sci->sc_dirty_files, i_dirty) {
+			if (ii2->i_temp > ii->i_temp) {
+				list_move_tail(&ii->i_dirty, &ii2->i_dirty);
+				return;
+			}
+		}
+
+		list_move_tail(&ii->i_dirty, &sci->sc_dirty_files);
+	}
+}
+
 static int nilfs_segctor_collect_dirty_files(struct nilfs_sc_info *sci,
 					     struct the_nilfs *nilfs)
 {
@@ -1947,7 +1975,10 @@ static int nilfs_segctor_collect_dirty_files(struct nilfs_sc_info *sci,
 
 		clear_bit(NILFS_I_QUEUED, &ii->i_state);
 		set_bit(NILFS_I_BUSY, &ii->i_state);
-		list_move_tail(&ii->i_dirty, &sci->sc_dirty_files);
+		if (nilfs_test_opt(nilfs, HOT_TRACK))
+			nilfs_segctor_insert_by_temp(sci, ii);
+		else
+			list_move_tail(&ii->i_dirty, &sci->sc_dirty_files);
 	}
 	spin_unlock(&nilfs->ns_inode_lock);
 
