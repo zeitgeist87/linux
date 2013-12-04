@@ -249,7 +249,7 @@ void hot_inode_item_put(struct hot_inode_item *he)
 {
         kref_put(&he->refs, hot_inode_item_free);
 }
-EXPORT_SYMBOL(hot_inode_item_lookup);
+EXPORT_SYMBOL(hot_inode_item_put);
 
 static struct hot_inode_item
 *hot_inode_item_alloc(struct hot_info *root, u64 ino)
