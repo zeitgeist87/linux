@@ -1915,6 +1915,53 @@ static int nilfs_segctor_wait(struct nilfs_sc_info *sci)
 	return ret;
 }
 
+
+#define NRW_MULTIPLIER_POWER 20 /* NRW - number of writes since mount */
+#define NRW_COEFF_POWER 0
+
+#define LTW_DIVIDER_POWER 30 /* LTW - time elapsed since last write(ns) */
+#define LTW_COEFF_POWER 1
+
+#define AVW_DIVIDER_POWER 40 /* AVW - average delta between recent writes(ns) */
+#define AVW_COEFF_POWER 0
+
+static u32 nilfs_hot_temp_calc(struct hot_freq *freq)
+{
+	u32 result = 0;
+
+	struct timespec ckt = current_kernel_time();
+	u64 cur_time = timespec_to_ns(&ckt);
+	u32 nrw_heat;
+	u64 ltw_heat, avw_heat;
+
+	nrw_heat = (u32)(freq->nr_writes << NRW_MULTIPLIER_POWER);
+
+	ltw_heat = (cur_time - timespec_to_ns(&freq->last_write_time))
+			>> LTW_DIVIDER_POWER;
+
+	avw_heat = (((u64) -1) - freq->avg_delta_writes)
+			>> AVW_DIVIDER_POWER;
+
+	/* ltw_heat is now guaranteed to be u32 safe */
+	if (ltw_heat >= ((u64)1 << 32))
+		ltw_heat = 0;
+	else
+		ltw_heat = ((u64)1 << 32) - ltw_heat;
+
+	/* avw_heat is now guaranteed to be u32 safe */
+	if (avw_heat >= ((u64)1 << 32))
+		avw_heat = (u32)-1;
+
+	nrw_heat = (u32)((u64)nrw_heat >> (3 - NRW_COEFF_POWER));
+	ltw_heat = (ltw_heat >> (3 - LTW_COEFF_POWER));
+	avw_heat = (avw_heat >> (3 - AVW_COEFF_POWER));
+
+	result = nrw_heat +
+		(u32) ltw_heat + (u32) avw_heat;
+
+	return result;
+}
+
 static void nilfs_segctor_insert_by_temp(struct nilfs_sc_info *sci,
 		struct nilfs_inode_info *ii)
 {
@@ -1929,7 +1976,7 @@ static void nilfs_segctor_insert_by_temp(struct nilfs_sc_info *sci,
 		ii->i_temp = (~(__u32)0);
 		list_move_tail(&ii->i_dirty, &sci->sc_dirty_files);
 	} else {
-		ii->i_temp = hot_temp_calc(&he->freq);
+		ii->i_temp = nilfs_hot_temp_calc(&he->freq);
 
 		spin_lock(&root->t_lock);
 		hot_inode_item_put(he);
