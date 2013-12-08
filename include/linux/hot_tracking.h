@@ -99,9 +99,12 @@ extern int sysctl_hot_mem_high_thresh;
 #define FS_IOC_GET_HEAT_INFO _IOR('f', 17, \
 			struct hot_heat_info)
 
-extern int hot_track_init(struct super_block *sb);
-extern void hot_track_exit(struct super_block *sb);
-extern void hot_freqs_update(struct inode *inode, loff_t start,
+int hot_track_init(struct super_block *sb);
+void hot_track_exit(struct super_block *sb);
+void hot_freqs_update(struct inode *inode, loff_t start,
 			size_t len, int rw);
+void hot_inode_item_put(struct hot_inode_item *he);
+struct hot_inode_item *hot_inode_item_lookup(struct hot_info *root, u64 ino);
+u32 hot_temp_calc(struct hot_freq *freq);
 
 #endif  /* _LINUX_HOTTRACK_H */
