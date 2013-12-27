@@ -85,6 +85,13 @@ struct nilfs_segsum_pointer {
 	unsigned		offset; /* offset in bytes */
 };
 
+struct nilfs_heat_group {
+	__u32 temp;
+	__u64 count;
+	struct list_head files;
+};
+#define NILFS_SC_GROUPS_NR 5
+
 /**
  * struct nilfs_sc_info - Segment constructor information
  * @sc_super: Back pointer to super_block struct
@@ -133,7 +140,8 @@ struct nilfs_sc_info {
 
 	unsigned long		sc_nblk_inc;
 
-	struct list_head	sc_dirty_files;
+	struct nilfs_heat_group sc_heat_groups[NILFS_SC_GROUPS_NR];
+	struct list_head	*sc_dirty_files;
 	struct list_head	sc_gc_inodes;
 
 	__u64		       *sc_freesegs;
