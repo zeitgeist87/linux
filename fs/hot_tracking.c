@@ -28,7 +28,7 @@ static void hot_range_item_init(struct hot_range_item *hr,
 	kref_init(&hr->refs);
 	INIT_LIST_HEAD(&hr->track_list);
 	hr->freq.avg_delta_reads = (u64) -1;
-	hr->freq.avg_delta_writes = (u64) -1;
+	hr->freq.avg_delta_writes = 0;
 	hr->start = start;
 	hr->len = 1 << RANGE_BITS;
 	hr->hot_inode = he;
@@ -205,7 +205,7 @@ static void hot_inode_item_init(struct hot_inode_item *he,
 	kref_init(&he->refs);
 	INIT_LIST_HEAD(&he->track_list);
 	he->freq.avg_delta_reads = (u64) -1;
-	he->freq.avg_delta_writes = (u64) -1;
+	he->freq.avg_delta_writes = 0;
 	he->ino = ino;
 	he->hot_root = root;
 	spin_lock_init(&he->i_lock);
@@ -404,8 +404,11 @@ static void hot_freq_calc(struct timespec old_atime,
 	struct timespec delta_ts;
 	u64 new_delta;
 
+	if (timespec_to_ns(&old_atime) == 0)
+		return;
+
 	delta_ts = timespec_sub(cur_time, old_atime);
-	new_delta = timespec_to_ns(&delta_ts) >> FREQ_POWER;
+	new_delta = timespec_to_ns(&delta_ts);
 
 	*avg = (*avg << FREQ_POWER) - *avg + new_delta;
 	*avg = *avg >> FREQ_POWER;

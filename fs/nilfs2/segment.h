@@ -87,7 +87,6 @@ struct nilfs_segsum_pointer {
 
 struct nilfs_heat_group {
 	__u32 temp;
-	__u64 count;
 	struct list_head files;
 };
 #define NILFS_SC_GROUPS_NR 5
