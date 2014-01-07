@@ -1944,60 +1944,35 @@ static int nilfs_segctor_partialy_abort_construction(struct nilfs_sc_info *sci,
 	return ret;
 }
 
-
-#define NRW_MULTIPLIER_POWER 20 /* NRW - number of writes since mount */
-#define NRW_COEFF_POWER 0
-
-#define LTW_DIVIDER_POWER 30 /* LTW - time elapsed since last write(ns) */
-#define LTW_COEFF_POWER 1
-
-#define AVW_DIVIDER_POWER 40 /* AVW - average delta between recent writes(ns) */
-#define AVW_COEFF_POWER 0
-
 static u32 nilfs_hot_temp_calc(struct hot_freq *freq)
 {
-	u32 result = 0;
+	u64 cur_time = current_kernel_time().tv_sec;
+	u32 writes;
+	u32 age;
 
-	struct timespec ckt = current_kernel_time();
-	u64 cur_time = timespec_to_ns(&ckt);
-	u32 nrw_heat;
-	u64 ltw_heat, avw_heat;
+	writes = (u32)(freq->nr_writes << 2);
 
-	nrw_heat = (u32)(freq->nr_writes << NRW_MULTIPLIER_POWER);
+	age = (u32)(cur_time - freq->last_write_time.tv_sec);
+	age = age == 0 ? 1 : age;
 
-	ltw_heat = (cur_time - timespec_to_ns(&freq->last_write_time))
-			>> LTW_DIVIDER_POWER;
-
-	avw_heat = (((u64) -1) - freq->avg_delta_writes)
-			>> AVW_DIVIDER_POWER;
-
-	/* ltw_heat is now guaranteed to be u32 safe */
-	if (ltw_heat >= ((u64)1 << 32))
-		ltw_heat = 0;
-	else
-		ltw_heat = ((u64)1 << 32) - ltw_heat;
-
-	/* avw_heat is now guaranteed to be u32 safe */
-	if (avw_heat >= ((u64)1 << 32))
-		avw_heat = (u32)-1;
-
-	nrw_heat = (u32)((u64)nrw_heat >> (3 - NRW_COEFF_POWER));
-	ltw_heat = (ltw_heat >> (3 - LTW_COEFF_POWER));
-	avw_heat = (avw_heat >> (3 - AVW_COEFF_POWER));
-
-	result = nrw_heat +
-		(u32) ltw_heat + (u32) avw_heat;
-
-	return result;
+	return writes / age;
 }
 
-static void nilfs_hot_temp_update(struct nilfs_inode_info *ii, struct nilfs_heat_group *group) {
+static void nilfs_hot_temp_update(struct nilfs_inode_info *ii,
+		struct nilfs_heat_group *group, struct nilfs_heat_group *next_group) {
 	struct nilfs_inode_info *ii2;
+	__u32 new_temp;
 
-	group->temp = (group->temp * group->count + ii->i_temp) / (group->count + 1);
+	new_temp = (group->temp * group->count + ii->i_temp)
+			/ (group->count + 1);
 	group->count++;
 
-	list_for_each_entry(ii2, &group->files, i_dirty) {
+	group->temp = next_group && new_temp > next_group->temp << 1 ?
+					next_group->temp << 1 : new_temp;
+
+
+	list_for_each_entry(ii2, &group->files, i_dirty)
+	{
 		if (ii2->i_temp > ii->i_temp) {
 			list_move_tail(&ii->i_dirty, &ii2->i_dirty);
 			return;
@@ -2007,18 +1982,18 @@ static void nilfs_hot_temp_update(struct nilfs_inode_info *ii, struct nilfs_heat
 	list_move_tail(&ii->i_dirty, &group->files);
 }
 
-static struct nilfs_heat_group *nilfs_hot_temp_select_group(struct nilfs_sc_info *sci, struct nilfs_inode_info *ii) {
-	struct nilfs_heat_group *group = &sci->sc_heat_groups[0];
-	__u32 temp, min_temp = (~(__u32)0);
+static int nilfs_hot_temp_select_group(struct nilfs_sc_info *sci, struct nilfs_inode_info *ii) {
+	int group = 0;
+	__s64 temp, min_temp = ((__s64)1 << 33);
 	int i;
 
 	for (i = 0; i < NILFS_SC_GROUPS_NR; ++i) {
-		temp = sci->sc_heat_groups[i].temp - ii->i_temp;
+		temp = (__s64)sci->sc_heat_groups[i].temp - ii->i_temp;
 		temp = temp < 0 ? -temp : temp;
 
 		if (temp < min_temp) {
 			min_temp = temp;
-			group = &sci->sc_heat_groups[i];
+			group = i;
 		}
 	}
 
@@ -2031,6 +2006,7 @@ static void nilfs_segctor_insert_by_temp(struct nilfs_sc_info *sci,
 	struct inode *inode = &ii->vfs_inode;
 	struct hot_info *root = inode->i_sb->s_hot_root;
 	struct hot_inode_item *he;
+	int group;
 
 	he = hot_inode_item_lookup(root, inode->i_ino);
 	if (IS_ERR(he)) {
@@ -2044,8 +2020,13 @@ static void nilfs_segctor_insert_by_temp(struct nilfs_sc_info *sci,
 		hot_inode_item_put(he);
 		spin_unlock(&root->t_lock);
 
-		nilfs_hot_temp_update(ii, nilfs_hot_temp_select_group(sci, ii));
+		group = nilfs_hot_temp_select_group(sci, ii);
+
+		nilfs_hot_temp_update(ii, &sci->sc_heat_groups[group],
+				group == NILFS_SC_GROUPS_NR - 1 ?
+						NULL : &sci->sc_heat_groups[group + 1]);
 	}
+	//printk(KERN_CRIT "TEMP: %u\n", ii->i_temp);
 }
 
 static int nilfs_segctor_collect_dirty_files(struct nilfs_sc_info *sci,
@@ -2821,12 +2802,12 @@ static struct nilfs_sc_info *nilfs_segctor_new(struct super_block *sb,
 	init_waitqueue_head(&sci->sc_wait_task);
 	spin_lock_init(&sci->sc_state_lock);
 
-	sci->sc_heat_groups[0].temp = 1 << 30;
+	sci->sc_heat_groups[0].temp = 0;
 	sci->sc_heat_groups[0].count = 0;
 	INIT_LIST_HEAD(&sci->sc_heat_groups[0].files);
 
 	for (i = 1; i < NILFS_SC_GROUPS_NR; ++i) {
-		sci->sc_heat_groups[i].temp = sci->sc_heat_groups[i - 1].temp + (1 << 20);
+		sci->sc_heat_groups[i].temp = sci->sc_heat_groups[i - 1].temp + (1 << 10);
 		sci->sc_heat_groups[i].count = 0;
 		INIT_LIST_HEAD(&sci->sc_heat_groups[i].files);
 	}
