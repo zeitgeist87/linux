@@ -2146,6 +2146,12 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 
 			mode = SC_FLUSH_FILE;
 		}
+		int count = 0;
+		struct nilfs_inode_info *ii;
+		list_for_each_entry(ii, sci->sc_dirty_files, i_dirty) {
+			count++;
+		}
+		printk(KERN_CRIT "SEGCTOR: %d %d %u\n", i, count, sci->sc_heat_groups[i].temp);
 
 		do {
 			sci->sc_stage.flags &= ~NILFS_CF_HISTORY_MASK;
