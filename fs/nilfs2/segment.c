@@ -2160,12 +2160,12 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 				if (sc_mode != SC_LSEG_SR && sc_mode != SC_LSEG_DSYNC
 					&& sci->sc_curseg->sb_rest_blocks > sci->sc_curseg->sb_sum.nblocks + NILFS_SEG_MIN_BLOCKS){
 
-					printk(KERN_CRIT "ABORT: %d\n", i);
-
 					if (list_empty(&sci->sc_write_logs)) {
+						printk(KERN_CRIT "ABORT: %d\n", i);
 						nilfs_segctor_abort_construction(sci, nilfs, 1);
 						break;
 					} else {
+						printk(KERN_CRIT "PART_ABORT: %d\n", i);
 						err = nilfs_segctor_partialy_abort_construction(sci, nilfs);
 						if (err)
 							goto failed_to_write;
@@ -2811,7 +2811,7 @@ static struct nilfs_sc_info *nilfs_segctor_new(struct super_block *sb,
 	INIT_LIST_HEAD(&sci->sc_heat_groups[0].files);
 
 	for (i = 1; i < NILFS_SC_GROUPS_NR; ++i) {
-		sci->sc_heat_groups[i].temp = sci->sc_heat_groups[i - 1].temp + (1 << 10);
+		sci->sc_heat_groups[i].temp = sci->sc_heat_groups[i - 1].temp + (1 << 9);
 		sci->sc_heat_groups[i].count = 0;
 		INIT_LIST_HEAD(&sci->sc_heat_groups[i].files);
 	}
