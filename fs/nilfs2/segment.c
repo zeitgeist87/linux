@@ -2130,6 +2130,7 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 			mode = SC_FLUSH_FILE;
 		}
 
+		count = 0;
 		list_for_each_entry(ii, sci->sc_dirty_files, i_dirty) {
 			count++;
 		}
