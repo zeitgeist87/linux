@@ -2101,6 +2101,8 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 {
 	struct the_nilfs *nilfs = sci->sc_super->s_fs_info;
 	int err, i, j, mode;
+	int count = 0;
+	struct nilfs_inode_info *ii;
 
 	err = nilfs_segctor_collect_dirty_files(sci, nilfs);
 	if (unlikely(err))
@@ -2127,8 +2129,7 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 
 			mode = SC_FLUSH_FILE;
 		}
-		int count = 0;
-		struct nilfs_inode_info *ii;
+
 		list_for_each_entry(ii, sci->sc_dirty_files, i_dirty) {
 			count++;
 		}
@@ -2159,6 +2160,7 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 					&& sci->sc_curseg->sb_rest_blocks > sci->sc_curseg->sb_sum.nblocks + NILFS_SEG_MIN_BLOCKS){
 
 					printk(KERN_CRIT "ABORT: %d\n", i);
+
 					if (list_empty(&sci->sc_write_logs)) {
 						nilfs_segctor_abort_construction(sci, nilfs, 1);
 						break;
