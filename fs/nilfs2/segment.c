@@ -2158,6 +2158,7 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 				if (sc_mode != SC_LSEG_SR && sc_mode != SC_LSEG_DSYNC
 					&& sci->sc_curseg->sb_rest_blocks > sci->sc_curseg->sb_sum.nblocks + NILFS_SEG_MIN_BLOCKS){
 
+					printk(KERN_CRIT "ABORT: %d\n", i);
 					if (list_empty(&sci->sc_write_logs)) {
 						nilfs_segctor_abort_construction(sci, nilfs, 1);
 						break;
