@@ -2103,8 +2103,6 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 {
 	struct the_nilfs *nilfs = sci->sc_super->s_fs_info;
 	int err, i, j, mode;
-	int count = 0;
-	struct nilfs_inode_info *ii;
 
 	err = nilfs_segctor_collect_dirty_files(sci, nilfs);
 	if (unlikely(err))
@@ -2132,13 +2130,6 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 			mode = SC_FLUSH_FILE;
 		}
 
-		count = 0;
-		list_for_each_entry(ii, sci->sc_dirty_files, i_dirty) {
-			count++;
-		}
-		printk(KERN_CRIT "SEGCTOR: %d %d %u\n", i, count, sci->sc_heat_groups[i].temp);
-
-		count = 0;
 		do {
 			sci->sc_stage.flags &= ~NILFS_CF_HISTORY_MASK;
 
@@ -2153,7 +2144,6 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 			if (unlikely(err))
 				goto failed;
 
-			count++;
 			/* Avoid empty segment */
 			if (sci->sc_stage.scnt == NILFS_ST_DONE) {
 				if (nilfs_segbuf_empty(sci->sc_curseg)) {
@@ -2165,11 +2155,9 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 					&& sci->sc_curseg->sb_rest_blocks > sci->sc_curseg->sb_sum.nblocks + NILFS_SEG_MIN_BLOCKS){
 
 					if (list_empty(&sci->sc_write_logs)) {
-						printk(KERN_CRIT "ABORT: %d %u %lu %d %d\n", i, sci->sc_curseg->sb_rest_blocks, sci->sc_curseg->sb_sum.nblocks, list_is_singular(&sci->sc_segbufs), count);
 						nilfs_segctor_abort_construction(sci, nilfs, 1);
 						break;
 					} else {
-						printk(KERN_CRIT "PART_ABORT: %d %u %lu %d %d\n", i, sci->sc_curseg->sb_rest_blocks, sci->sc_curseg->sb_sum.nblocks, list_is_singular(&sci->sc_segbufs), count);
 						err = nilfs_segctor_partialy_abort_construction(sci, nilfs);
 						if (err)
 							goto failed_to_write;
