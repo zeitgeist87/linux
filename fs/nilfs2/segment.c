@@ -1968,9 +1968,11 @@ static void nilfs_hot_temp_update(struct nilfs_inode_info *ii,
 	next_group = i < NILFS_SC_GROUPS_NR - 1 ? &groups[i + 1] : NULL;
 	prev_group = i > 0 ? &groups[i - 1] : NULL;
 
+	/* Modified moving average with N=32 */
 	new_temp = (group->temp << 5) - group->temp + ii->i_temp;
 	new_temp >>= 5;
 
+	/* guards to prevent groups from getting too close */
 	new_temp = next_group && new_temp + 265 > next_group->temp
 			? (next_group->temp > 256 ? next_group->temp - 256 : 0)
 			: new_temp;
