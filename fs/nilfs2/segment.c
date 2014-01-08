@@ -1971,14 +1971,12 @@ static void nilfs_hot_temp_update(struct nilfs_inode_info *ii,
 	new_temp = (group->temp << 5) - group->temp + ii->i_temp;
 	new_temp >>= 5;
 
-	new_temp = next_group && new_temp > next_group->temp >> 1 ?
-					next_group->temp >> 1 : new_temp;
+	new_temp = next_group && new_temp + 265 > next_group->temp
+			? (next_group->temp > 256 ? next_group->temp - 256 : 0)
+			: new_temp;
 
-	new_temp = prev_group && new_temp >> 1 < prev_group->temp ?
-					prev_group->temp << 1 : new_temp;
-
-	group->temp = new_temp < 10 ? 10 : new_temp;
-
+	group->temp = prev_group && new_temp < prev_group->temp + 256
+			? prev_group->temp + 256 : new_temp;
 
 	list_for_each_entry(ii2, &group->files, i_dirty)
 	{
