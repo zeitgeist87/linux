@@ -2163,11 +2163,11 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int sc_mode)
 					&& sci->sc_curseg->sb_rest_blocks > sci->sc_curseg->sb_sum.nblocks + NILFS_SEG_MIN_BLOCKS){
 
 					if (list_empty(&sci->sc_write_logs)) {
-						printk(KERN_CRIT "ABORT: %d %u %lu\n", i, sci->sc_curseg->sb_rest_blocks, sci->sc_curseg->sb_sum.nblocks);
+						printk(KERN_CRIT "ABORT: %d %u %lu %d\n", i, sci->sc_curseg->sb_rest_blocks, sci->sc_curseg->sb_sum.nblocks, list_is_singular(&sci->sc_segbufs));
 						nilfs_segctor_abort_construction(sci, nilfs, 1);
 						break;
 					} else {
-						printk(KERN_CRIT "PART_ABORT: %d %u %lu\n", i, sci->sc_curseg->sb_rest_blocks, sci->sc_curseg->sb_sum.nblocks);
+						printk(KERN_CRIT "PART_ABORT: %d %u %lu %d\n", i, sci->sc_curseg->sb_rest_blocks, sci->sc_curseg->sb_sum.nblocks, list_is_singular(&sci->sc_segbufs));
 						err = nilfs_segctor_partialy_abort_construction(sci, nilfs);
 						if (err)
 							goto failed_to_write;
