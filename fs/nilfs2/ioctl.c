@@ -571,6 +571,40 @@ int nilfs_ioctl_prepare_clean_segments(struct the_nilfs *nilfs,
 	return ret;
 }
 
+static int nilfs_ioctl_update_segment_usage(struct super_block *sb,
+				   struct nilfs_argv argv[5], void *bufs[5])
+{
+	size_t nmembs;
+	struct the_nilfs *nilfs = sb->s_fs_info;
+	struct inode *sufile = nilfs->ns_sufile;
+	struct nilfs_suinfo si;
+	__u64 *segnums;
+	int i, ret;
+	struct nilfs_transaction_info ti;
+
+	ret = nilfs_transaction_begin(sb, &ti, 0);
+	if (unlikely(ret))
+		return ret;
+
+	nmembs = argv[4].v_nmembs;
+	for (i = 0, segnums = bufs[4]; i < nmembs; ++i) {
+		ret = nilfs_sufile_get_suinfo(sufile, segnums[i], &si, sizeof(struct nilfs_suinfo), 1);
+		if (unlikely(ret < 0))
+			goto failure;
+
+		ret = nilfs_sufile_set_segment_usage(sufile, segnums[i], si.sui_nblocks, nilfs->ns_ctime);
+		if (unlikely(ret < 0))
+			goto failure;
+	}
+
+	nilfs_transaction_commit(sb);
+	return ret;
+
+ failure:
+ 	nilfs_transaction_abort(sb);
+	return ret;
+}
+
 static int nilfs_ioctl_clean_segments(struct inode *inode, struct file *filp,
 				      unsigned int cmd, void __user *argp)
 {
@@ -660,14 +694,19 @@ static int nilfs_ioctl_clean_segments(struct inode *inode, struct file *filp,
 		goto out_free;
 	}
 
-	ret = nilfs_ioctl_move_blocks(inode->i_sb, &argv[0], kbufs[0]);
-	if (ret < 0)
-		printk(KERN_ERR "NILFS: GC failed during preparation: "
-			"cannot read source blocks: err=%d\n", ret);
-	else {
-		if (nilfs_sb_need_update(nilfs))
-			set_nilfs_discontinued(nilfs);
-		ret = nilfs_clean_segments(inode->i_sb, argv, kbufs);
+	if (argv[0].v_flags == NILFS_CLEAN_SEGMENTS_UPDATE_SEGUSG) {
+		/* only update segment usage */
+		ret = nilfs_ioctl_update_segment_usage(inode->i_sb, argv, kbufs);
+	} else {
+		ret = nilfs_ioctl_move_blocks(inode->i_sb, &argv[0], kbufs[0]);
+		if (ret < 0)
+			printk(KERN_ERR "NILFS: GC failed during preparation: "
+				"cannot read source blocks: err=%d\n", ret);
+		else {
+			if (nilfs_sb_need_update(nilfs))
+				set_nilfs_discontinued(nilfs);
+			ret = nilfs_clean_segments(inode->i_sb, argv, kbufs);
+		}
 	}
 
 	nilfs_remove_all_gcinodes(nilfs);
