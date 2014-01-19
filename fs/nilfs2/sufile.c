@@ -870,6 +870,97 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 }
 
 /**
+ * nilfs_sufile_set_suinfo -
+ * @sufile: inode of segment usage file
+ * @flags: flags specifying which fields to update
+ * @buf: array of suinfo
+ * @supsz: byte size of suinfo
+ * @nsup: size of suinfo array
+ *
+ * Description:
+ *
+ * Return Value: On success, 0 is returned and .... On error, one of the
+ * following negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ *
+ * %-EINVAL - Invalid segment number in input
+ */
+ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
+				unsigned supsz, size_t nsup)
+{
+	struct buffer_head *bh;
+	struct nilfs_suinfo_update *sup, *supv = buf;
+	struct nilfs_segment_usage *su;
+	void *kaddr;
+	unsigned long blkoff, prev_blkoff;
+	size_t nerr = 0;
+	int ret = 0;
+
+	if (unlikely(nsup == 0))
+		goto out;
+
+	down_write(&NILFS_MDT(sufile)->mi_sem);
+	for (sup = supv; sup < supv + nsup; sup++) {
+		if (unlikely(sup->sup_segnum >=
+				nilfs_sufile_get_nsegments(sufile))) {
+			printk(KERN_WARNING
+			       "%s: invalid segment number: %llu\n", __func__,
+			       (unsigned long long)sup->sup_segnum);
+			nerr++;
+		}
+	}
+	if (nerr > 0) {
+		ret = -EINVAL;
+		goto out_sem;
+	}
+
+	sup = supv;
+	blkoff = nilfs_sufile_get_blkoff(sufile, sup->sup_segnum);
+	ret = nilfs_mdt_get_block(sufile, blkoff, 1, NULL, &bh);
+	if (ret < 0)
+		goto out_sem;
+
+	for (;;) {
+		kaddr = kmap_atomic(bh->b_page);
+		su = nilfs_sufile_block_get_segment_usage(
+			sufile, sup->sup_segnum, bh, kaddr);
+
+		if (nilfs_suinfo_update_lastmod(sup))
+			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
+
+		if (nilfs_suinfo_update_nblocks(sup))
+			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
+
+		if (nilfs_suinfo_update_flags(sup))
+			su->su_flags = cpu_to_le32(sup->sup_sui.sui_flags);
+
+		kunmap_atomic(kaddr);
+
+		if (++sup >= supv + nsup)
+			break;
+		prev_blkoff = blkoff;
+		blkoff = nilfs_sufile_get_blkoff(sufile, sup->sup_segnum);
+		if (blkoff == prev_blkoff)
+			continue;
+
+		/* get different block */
+		brelse(bh);
+		ret = nilfs_mdt_get_block(sufile, blkoff, 1, NULL, &bh);
+		if (unlikely(ret < 0))
+			goto out_sem;
+	}
+	brelse(bh);
+
+ out_sem:
+	up_write(&NILFS_MDT(sufile)->mi_sem);
+ out:
+	return ret;
+}
+
+/**
  * nilfs_sufile_read - read or get sufile inode
  * @sb: super block instance
  * @susize: size of a segment usage entry

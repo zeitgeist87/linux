@@ -273,6 +273,13 @@ nilfs_ioctl_do_get_suinfo(struct the_nilfs *nilfs, __u64 *posp, int flags,
 	return ret;
 }
 
+static ssize_t
+nilfs_ioctl_do_set_suinfo(struct the_nilfs *nilfs, __u64 *posp, int flags,
+			  void *buf, size_t size, size_t nmembs)
+{
+	return nilfs_sufile_set_suinfo(nilfs->ns_sufile, buf, size, nmembs);
+}
+
 static int nilfs_ioctl_get_sustat(struct inode *inode, struct file *filp,
 				  unsigned int cmd, void __user *argp)
 {
@@ -571,42 +578,6 @@ int nilfs_ioctl_prepare_clean_segments(struct the_nilfs *nilfs,
 	return ret;
 }
 
-static int nilfs_ioctl_update_segment_usage(struct super_block *sb,
-				struct nilfs_argv argv[5], void *bufs[5])
-{
-	size_t nmembs;
-	struct the_nilfs *nilfs = sb->s_fs_info;
-	struct inode *sufile = nilfs->ns_sufile;
-	struct nilfs_suinfo si;
-	__u64 *segnums;
-	int i, ret;
-	struct nilfs_transaction_info ti;
-
-	ret = nilfs_transaction_begin(sb, &ti, 0);
-	if (unlikely(ret))
-		return ret;
-
-	nmembs = argv[4].v_nmembs;
-	for (i = 0, segnums = bufs[4]; i < nmembs; ++i) {
-		ret = nilfs_sufile_get_suinfo(sufile, segnums[i],
-				&si, sizeof(struct nilfs_suinfo), 1);
-		if (unlikely(ret < 0))
-			goto failure;
-
-		ret = nilfs_sufile_set_segment_usage(sufile, segnums[i],
-				si.sui_nblocks, nilfs->ns_ctime);
-		if (unlikely(ret < 0))
-			goto failure;
-	}
-
-	nilfs_transaction_commit(sb);
-	return ret;
-
- failure:
-	nilfs_transaction_abort(sb);
-	return ret;
-}
-
 static int nilfs_ioctl_clean_segments(struct inode *inode, struct file *filp,
 				      unsigned int cmd, void __user *argp)
 {
@@ -696,20 +667,14 @@ static int nilfs_ioctl_clean_segments(struct inode *inode, struct file *filp,
 		goto out_free;
 	}
 
-	if (argv[0].v_flags == NILFS_CLEAN_SEGMENTS_UPDATE_SEGUSG) {
-		/* only update segment usage */
-		ret = nilfs_ioctl_update_segment_usage(inode->i_sb, argv,
-				kbufs);
-	} else {
-		ret = nilfs_ioctl_move_blocks(inode->i_sb, &argv[0], kbufs[0]);
-		if (ret < 0)
-			printk(KERN_ERR "NILFS: GC failed during preparation: "
-				"cannot read source blocks: err=%d\n", ret);
-		else {
-			if (nilfs_sb_need_update(nilfs))
-				set_nilfs_discontinued(nilfs);
-			ret = nilfs_clean_segments(inode->i_sb, argv, kbufs);
-		}
+	ret = nilfs_ioctl_move_blocks(inode->i_sb, &argv[0], kbufs[0]);
+	if (ret < 0)
+		printk(KERN_ERR "NILFS: GC failed during preparation: "
+			"cannot read source blocks: err=%d\n", ret);
+	else {
+		if (nilfs_sb_need_update(nilfs))
+			set_nilfs_discontinued(nilfs);
+		ret = nilfs_clean_segments(inode->i_sb, argv, kbufs);
 	}
 
 	nilfs_remove_all_gcinodes(nilfs);
@@ -809,6 +774,44 @@ out:
 	return ret;
 }
 
+static int nilfs_ioctl_set_info(struct inode *inode, struct file *filp,
+				unsigned int cmd, void __user *argp,
+				size_t membsz,
+				ssize_t (*dofunc)(struct the_nilfs *,
+						  __u64 *, int,
+						  void *, size_t, size_t))
+{
+	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
+	struct nilfs_transaction_info ti;
+	struct nilfs_argv argv;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
+
+	ret = -EFAULT;
+	if (copy_from_user(&argv, argp, sizeof(argv)))
+		goto out;
+
+	if (argv.v_size < membsz)
+		return -EINVAL;
+
+	nilfs_transaction_begin(inode->i_sb, &ti, 0);
+	ret = nilfs_ioctl_wrap_copy(nilfs, &argv, _IOC_DIR(cmd), dofunc);
+	if (unlikely(ret < 0))
+		nilfs_transaction_abort(inode->i_sb);
+	else
+		nilfs_transaction_commit(inode->i_sb); /* never fails */
+
+out:
+	mnt_drop_write_file(filp);
+	return ret;
+}
+
 static int nilfs_ioctl_get_info(struct inode *inode, struct file *filp,
 				unsigned int cmd, void __user *argp,
 				size_t membsz,
@@ -862,6 +865,10 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_info(inode, filp, cmd, argp,
 					    sizeof(struct nilfs_suinfo),
 					    nilfs_ioctl_do_get_suinfo);
+	case NILFS_IOCTL_SET_SUINFO:
+		return nilfs_ioctl_set_info(inode, filp, cmd, argp,
+					    sizeof(struct nilfs_suinfo_update),
+					    nilfs_ioctl_do_set_suinfo);
 	case NILFS_IOCTL_GET_SUSTAT:
 		return nilfs_ioctl_get_sustat(inode, filp, cmd, argp);
 	case NILFS_IOCTL_GET_VINFO:
@@ -901,6 +908,7 @@ long nilfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case NILFS_IOCTL_GET_CPINFO:
 	case NILFS_IOCTL_GET_CPSTAT:
 	case NILFS_IOCTL_GET_SUINFO:
+	case NILFS_IOCTL_SET_SUINFO:
 	case NILFS_IOCTL_GET_SUSTAT:
 	case NILFS_IOCTL_GET_VINFO:
 	case NILFS_IOCTL_GET_BDESCS:
