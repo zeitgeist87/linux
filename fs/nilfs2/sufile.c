@@ -872,12 +872,12 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 /**
  * nilfs_sufile_set_suinfo -
  * @sufile: inode of segment usage file
- * @flags: flags specifying which fields to update
  * @buf: array of suinfo
  * @supsz: byte size of suinfo
  * @nsup: size of suinfo array
  *
- * Description:
+ * Description: Takes an array of nilfs_suinfo_update structs and updates
+ * segment usage accordingly.
  *
  * Return Value: On success, 0 is returned and .... On error, one of the
  * following negative error codes is returned.
