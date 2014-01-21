@@ -273,6 +273,13 @@ nilfs_ioctl_do_get_suinfo(struct the_nilfs *nilfs, __u64 *posp, int flags,
 	return ret;
 }
 
+static ssize_t
+nilfs_ioctl_do_set_suinfo(struct the_nilfs *nilfs, __u64 *posp, int flags,
+			  void *buf, size_t size, size_t nmembs)
+{
+	return nilfs_sufile_set_suinfo(nilfs->ns_sufile, buf, size, nmembs);
+}
+
 static int nilfs_ioctl_get_sustat(struct inode *inode, struct file *filp,
 				  unsigned int cmd, void __user *argp)
 {
@@ -767,6 +774,44 @@ out:
 	return ret;
 }
 
+static int nilfs_ioctl_set_info(struct inode *inode, struct file *filp,
+				unsigned int cmd, void __user *argp,
+				size_t membsz,
+				ssize_t (*dofunc)(struct the_nilfs *,
+						  __u64 *, int,
+						  void *, size_t, size_t))
+{
+	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
+	struct nilfs_transaction_info ti;
+	struct nilfs_argv argv;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
+
+	ret = -EFAULT;
+	if (copy_from_user(&argv, argp, sizeof(argv)))
+		goto out;
+
+	if (argv.v_size < membsz)
+		return -EINVAL;
+
+	nilfs_transaction_begin(inode->i_sb, &ti, 0);
+	ret = nilfs_ioctl_wrap_copy(nilfs, &argv, _IOC_DIR(cmd), dofunc);
+	if (unlikely(ret < 0))
+		nilfs_transaction_abort(inode->i_sb);
+	else
+		nilfs_transaction_commit(inode->i_sb); /* never fails */
+
+out:
+	mnt_drop_write_file(filp);
+	return ret;
+}
+
 static int nilfs_ioctl_get_info(struct inode *inode, struct file *filp,
 				unsigned int cmd, void __user *argp,
 				size_t membsz,
@@ -820,6 +865,10 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_info(inode, filp, cmd, argp,
 					    sizeof(struct nilfs_suinfo),
 					    nilfs_ioctl_do_get_suinfo);
+	case NILFS_IOCTL_SET_SUINFO:
+		return nilfs_ioctl_set_info(inode, filp, cmd, argp,
+					    sizeof(struct nilfs_suinfo_update),
+					    nilfs_ioctl_do_set_suinfo);
 	case NILFS_IOCTL_GET_SUSTAT:
 		return nilfs_ioctl_get_sustat(inode, filp, cmd, argp);
 	case NILFS_IOCTL_GET_VINFO:
@@ -859,6 +908,7 @@ long nilfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case NILFS_IOCTL_GET_CPINFO:
 	case NILFS_IOCTL_GET_CPSTAT:
 	case NILFS_IOCTL_GET_SUINFO:
+	case NILFS_IOCTL_SET_SUINFO:
 	case NILFS_IOCTL_GET_SUSTAT:
 	case NILFS_IOCTL_GET_VINFO:
 	case NILFS_IOCTL_GET_BDESCS:
