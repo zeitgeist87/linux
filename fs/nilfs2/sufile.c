@@ -870,14 +870,15 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 }
 
 /**
- * nilfs_sufile_set_suinfo -
+ * nilfs_sufile_set_suinfo - sets segment usage info
  * @sufile: inode of segment usage file
- * @buf: array of suinfo
- * @supsz: byte size of suinfo
- * @nsup: size of suinfo array
+ * @buf: array of suinfo_update
+ * @supsz: byte size of suinfo_update
+ * @nsup: size of suinfo_update array
  *
  * Description: Takes an array of nilfs_suinfo_update structs and updates
- * segment usage accordingly.
+ * segment usage accordingly. Only the fields indicated by the sup_flags
+ * are updated.
  *
  * Return Value: On success, 0 is returned and .... On error, one of the
  * following negative error codes is returned.
@@ -891,13 +892,14 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 				unsigned supsz, size_t nsup)
 {
-	struct buffer_head *bh;
+	struct buffer_head *header_bh, *bh;
 	struct nilfs_suinfo_update *sup, *supv = buf;
 	struct nilfs_segment_usage *su;
-	void *kaddr;
+	void *kaddr, *kaddr2;
 	unsigned long blkoff, prev_blkoff;
-	size_t nerr = 0;
-	int ret = 0;
+	size_t i;
+	int ret = 0, ncleansegs, ndirtysegs, cleansi,
+			cleansu, dirtysi, dirtysu;
 
 	if (unlikely(nsup == 0))
 		goto out;
@@ -909,21 +911,31 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 			printk(KERN_WARNING
 			       "%s: invalid segment number: %llu\n", __func__,
 			       (unsigned long long)sup->sup_segnum);
-			nerr++;
+			ret = -EINVAL;
+			goto out_sem;
+		}
+
+		if (unlikely(sup->sup_flags &
+				(~0UL << (NILFS_SEGMENT_USAGE_ERROR + 1)))) {
+			printk(KERN_WARNING
+			       "%s: invalid flags: 0x%lx\n", __func__,
+			       (unsigned long)sup->sup_flags);
+			ret = -EINVAL;
+			goto out_sem;
 		}
 	}
-	if (nerr > 0) {
-		ret = -EINVAL;
+
+	ret = nilfs_sufile_get_header_block(sufile, &header_bh);
+	if (ret < 0)
 		goto out_sem;
-	}
 
 	sup = supv;
 	blkoff = nilfs_sufile_get_blkoff(sufile, sup->sup_segnum);
 	ret = nilfs_mdt_get_block(sufile, blkoff, 1, NULL, &bh);
 	if (ret < 0)
-		goto out_sem;
+		goto out_header;
 
-	for (;;) {
+	for (i = 0; i < nsup; ++i, sup = (void *)sup + supsz) {
 		kaddr = kmap_atomic(bh->b_page);
 		su = nilfs_sufile_block_get_segment_usage(
 			sufile, sup->sup_segnum, bh, kaddr);
@@ -934,26 +946,53 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 		if (nilfs_suinfo_update_nblocks(sup))
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
 
-		if (nilfs_suinfo_update_flags(sup))
+		if (nilfs_suinfo_update_flags(sup)) {
+			sup->sup_sui.sui_flags &=
+					~(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
+			ncleansegs = 0;
+			ndirtysegs = 0;
+			cleansi = nilfs_suinfo_clean(&sup->sup_sui);
+			cleansu = nilfs_segment_usage_clean(su);
+			dirtysi = nilfs_suinfo_dirty(&sup->sup_sui);
+			dirtysu = nilfs_segment_usage_dirty(su);
+
+			if (cleansi && !cleansu)
+				++ncleansegs;
+			else if (!cleansi && cleansu)
+				--ncleansegs;
+
+			if (dirtysi && !dirtysu)
+				++ndirtysegs;
+			else if (!dirtysi && dirtysu)
+				--ndirtysegs;
+
 			su->su_flags = cpu_to_le32(sup->sup_sui.sui_flags);
+
+			nilfs_sufile_mod_counter(header_bh, ncleansegs,
+					ndirtysegs);
+			NILFS_SUI(sufile)->ncleansegs += ncleansegs;
+		}
 
 		kunmap_atomic(kaddr);
 
-		if (++sup >= supv + nsup)
-			break;
 		prev_blkoff = blkoff;
 		blkoff = nilfs_sufile_get_blkoff(sufile, sup->sup_segnum);
 		if (blkoff == prev_blkoff)
 			continue;
 
 		/* get different block */
+		mark_buffer_dirty(bh);
 		brelse(bh);
 		ret = nilfs_mdt_get_block(sufile, blkoff, 1, NULL, &bh);
 		if (unlikely(ret < 0))
-			goto out_sem;
+			goto out_mark;
 	}
 	brelse(bh);
 
+ out_mark:
+	nilfs_mdt_mark_dirty(sufile);
+ out_header:
+	brelse(header_bh);
  out_sem:
 	up_write(&NILFS_MDT(sufile)->mi_sem);
  out:
