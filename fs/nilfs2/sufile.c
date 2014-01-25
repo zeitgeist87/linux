@@ -945,18 +945,32 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 	(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
 			sup->sup_sui.sui_lastmod);
 
-		if (nilfs_suinfo_update_lastmod(sup))
+		if (nilfs_suinfo_update_lastmod(sup)) {
 			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
 
+			printk(KERN_CRIT "%s: update lastmod: %llu 0x%lx %llu\n", __func__,
+		(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
+				sup->sup_sui.sui_lastmod);
+		}
+
 		if (nilfs_suinfo_update_nblocks(sup)
-			&& sup->sup_sui.sui_nblocks <= blocks_per_segment)
+			&& sup->sup_sui.sui_nblocks <= blocks_per_segment) {
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
+
+		printk(KERN_CRIT "%s: update nblocks: %llu 0x%lx %llu\n", __func__,
+	(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
+			sup->sup_sui.sui_lastmod);
+		}
 
 		if (nilfs_suinfo_update_flags(sup)) {
 			/* strip invalid flags and the active flag */
 			sup->sup_sui.sui_flags &=
 				~(~0UL << (NILFS_SEGMENT_USAGE_ERROR + 1)) &
 				~(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
+
+			printk(KERN_CRIT "%s: update flags: %llu 0x%lx 0x%lx\n", __func__,
+		(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
+		sup->sup_sui.sui_flags);
 
 			ncleansegs = 0;
 			ndirtysegs = 0;
