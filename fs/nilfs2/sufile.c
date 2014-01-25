@@ -941,6 +941,10 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 		su = nilfs_sufile_block_get_segment_usage(
 			sufile, sup->sup_segnum, bh, kaddr);
 
+		printk(KERN_CRIT "%s: set_suinfo: %llu 0x%lx %llu\n", __func__,
+	(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
+			sup->sup_sui.sui_lastmod);
+
 		if (nilfs_suinfo_update_lastmod(sup))
 			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
 
