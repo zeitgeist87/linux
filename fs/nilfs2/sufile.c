@@ -936,41 +936,23 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 	if (ret < 0)
 		goto out_header;
 
-	for (; sup < supend; sup = (void *)sup + supsz) {
+	for (;;) {
 		kaddr = kmap_atomic(bh->b_page);
 		su = nilfs_sufile_block_get_segment_usage(
 			sufile, sup->sup_segnum, bh, kaddr);
 
-		printk(KERN_CRIT "%s: set_suinfo: %llu 0x%lx %llu\n", __func__,
-	(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
-			sup->sup_sui.sui_lastmod);
-
-		if (nilfs_suinfo_update_lastmod(sup)) {
+		if (nilfs_suinfo_update_lastmod(sup))
 			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
 
-			printk(KERN_CRIT "%s: update lastmod: %llu 0x%lx %llu\n", __func__,
-		(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
-				sup->sup_sui.sui_lastmod);
-		}
-
 		if (nilfs_suinfo_update_nblocks(sup)
-			&& sup->sup_sui.sui_nblocks <= blocks_per_segment) {
+			&& sup->sup_sui.sui_nblocks <= blocks_per_segment)
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
-
-		printk(KERN_CRIT "%s: update nblocks: %llu 0x%lx %llu\n", __func__,
-	(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
-			sup->sup_sui.sui_lastmod);
-		}
 
 		if (nilfs_suinfo_update_flags(sup)) {
 			/* strip invalid flags and the active flag */
 			sup->sup_sui.sui_flags &=
 				~(~0UL << (NILFS_SEGMENT_USAGE_ERROR + 1)) &
 				~(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
-
-			printk(KERN_CRIT "%s: update flags: %llu 0x%lx 0x%lx\n", __func__,
-		(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
-		sup->sup_sui.sui_flags);
 
 			ncleansegs = 0;
 			ndirtysegs = 0;
@@ -998,6 +980,10 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 
 		kunmap_atomic(kaddr);
 
+		sup = (void *)sup + supsz;
+		if (sup >= supend)
+			break;
+
 		prev_blkoff = blkoff;
 		blkoff = nilfs_sufile_get_blkoff(sufile, sup->sup_segnum);
 		if (blkoff == prev_blkoff)
@@ -1010,6 +996,7 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 		if (unlikely(ret < 0))
 			goto out_mark;
 	}
+	mark_buffer_dirty(bh);
 	brelse(bh);
 
  out_mark:
