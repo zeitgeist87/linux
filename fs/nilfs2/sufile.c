@@ -892,20 +892,21 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 				unsigned supsz, size_t nsup)
 {
+	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
 	struct buffer_head *header_bh, *bh;
-	struct nilfs_suinfo_update *sup, *supv = buf;
+	struct nilfs_suinfo_update *sup, *supend = buf + supsz * nsup;
 	struct nilfs_segment_usage *su;
-	void *kaddr, *kaddr2;
+	void *kaddr;
 	unsigned long blkoff, prev_blkoff;
-	size_t i;
+	__u32 blocks_per_segment = nilfs->ns_blocks_per_segment;
 	int ret = 0, ncleansegs, ndirtysegs, cleansi,
 			cleansu, dirtysi, dirtysu;
 
 	if (unlikely(nsup == 0))
-		goto out;
+		return ret;
 
 	down_write(&NILFS_MDT(sufile)->mi_sem);
-	for (sup = supv; sup < supv + nsup; sup++) {
+	for (sup = buf; sup < supend; sup = (void *)sup + supsz) {
 		if (unlikely(sup->sup_segnum >=
 				nilfs_sufile_get_nsegments(sufile))) {
 			printk(KERN_WARNING
@@ -916,7 +917,7 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 		}
 
 		if (unlikely(sup->sup_flags &
-				(~0UL << (NILFS_SEGMENT_USAGE_ERROR + 1)))) {
+				(~0UL << (NILFS_SUINFO_UPDATE_FLAGS + 1)))) {
 			printk(KERN_WARNING
 			       "%s: invalid flags: 0x%lx\n", __func__,
 			       (unsigned long)sup->sup_flags);
@@ -929,26 +930,34 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 	if (ret < 0)
 		goto out_sem;
 
-	sup = supv;
+	sup = buf;
 	blkoff = nilfs_sufile_get_blkoff(sufile, sup->sup_segnum);
 	ret = nilfs_mdt_get_block(sufile, blkoff, 1, NULL, &bh);
 	if (ret < 0)
 		goto out_header;
 
-	for (i = 0; i < nsup; ++i, sup = (void *)sup + supsz) {
+	for (; sup < supend; sup = (void *)sup + supsz) {
 		kaddr = kmap_atomic(bh->b_page);
 		su = nilfs_sufile_block_get_segment_usage(
 			sufile, sup->sup_segnum, bh, kaddr);
 
+		printk(KERN_CRIT "%s: set_suinfo: %llu 0x%lx %llu\n", __func__,
+	(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
+			sup->sup_sui.sui_lastmod);
+
 		if (nilfs_suinfo_update_lastmod(sup))
 			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
 
-		if (nilfs_suinfo_update_nblocks(sup))
+		if (nilfs_suinfo_update_nblocks(sup)
+			&& sup->sup_sui.sui_nblocks <= blocks_per_segment)
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
 
 		if (nilfs_suinfo_update_flags(sup)) {
+			/* strip invalid flags and the active flag */
 			sup->sup_sui.sui_flags &=
-					~(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
+				~(~0UL << (NILFS_SEGMENT_USAGE_ERROR + 1)) &
+				~(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
+
 			ncleansegs = 0;
 			ndirtysegs = 0;
 			cleansi = nilfs_suinfo_clean(&sup->sup_sui);
@@ -995,7 +1004,6 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 	brelse(header_bh);
  out_sem:
 	up_write(&NILFS_MDT(sufile)->mi_sem);
- out:
 	return ret;
 }
 
