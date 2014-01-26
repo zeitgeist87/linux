@@ -905,26 +905,20 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 	if (unlikely(nsup == 0))
 		return ret;
 
-	down_write(&NILFS_MDT(sufile)->mi_sem);
 	for (sup = buf; sup < supend; sup = (void *)sup + supsz) {
-		if (unlikely(sup->sup_segnum >=
-				nilfs_sufile_get_nsegments(sufile))) {
-			printk(KERN_WARNING
-			       "%s: invalid segment number: %llu\n", __func__,
-			       (unsigned long long)sup->sup_segnum);
-			ret = -EINVAL;
-			goto out_sem;
-		}
-
-		if (unlikely(sup->sup_flags &
-				(~0UL << (NILFS_SUINFO_UPDATE_FLAGS + 1)))) {
-			printk(KERN_WARNING
-			       "%s: invalid flags: 0x%lx\n", __func__,
-			       (unsigned long)sup->sup_flags);
-			ret = -EINVAL;
-			goto out_sem;
-		}
+		if (sup->sup_segnum >=
+				nilfs_sufile_get_nsegments(sufile)
+			|| (sup->sup_flags &
+				(~0UL << (NILFS_SUINFO_UPDATE_FLAGS + 1)))
+			|| (nilfs_suinfo_update_nblocks(sup) &&
+				sup->sup_sui.sui_nblocks > blocks_per_segment)
+			|| (nilfs_suinfo_update_flags(sup) &&
+				(sup->sup_sui.sui_flags &
+				(~0UL << (NILFS_SEGMENT_USAGE_ERROR + 1)))))
+			return -EINVAL;
 	}
+
+	down_write(&NILFS_MDT(sufile)->mi_sem);
 
 	ret = nilfs_sufile_get_header_block(sufile, &header_bh);
 	if (ret < 0)
@@ -941,22 +935,15 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 		su = nilfs_sufile_block_get_segment_usage(
 			sufile, sup->sup_segnum, bh, kaddr);
 
-		printk(KERN_CRIT "%s: set_suinfo: %llu 0x%lx %llu\n", __func__,
-	(unsigned long long)sup->sup_segnum, (unsigned long)sup->sup_flags,
-			sup->sup_sui.sui_lastmod);
-
 		if (nilfs_suinfo_update_lastmod(sup))
 			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
 
-		if (nilfs_suinfo_update_nblocks(sup)
-			&& sup->sup_sui.sui_nblocks <= blocks_per_segment)
+		if (nilfs_suinfo_update_nblocks(sup))
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
 
 		if (nilfs_suinfo_update_flags(sup)) {
-			/* strip invalid flags and the active flag */
 			sup->sup_sui.sui_flags &=
-				~(~0UL << (NILFS_SEGMENT_USAGE_ERROR + 1)) &
-				~(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
+					~(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
 
 			ncleansegs = 0;
 			ndirtysegs = 0;
