@@ -2288,7 +2288,8 @@ static int nilfs_segctor_construct(struct nilfs_sc_info *sci, int mode)
 		if (mode != SC_FLUSH_DAT)
 			atomic_set(&nilfs->ns_ndirtyblks, 0);
 		if (test_bit(NILFS_SC_SUPER_ROOT, &sci->sc_flags) &&
-		    nilfs_discontinued(nilfs)) {
+		    nilfs_discontinued(nilfs) &&
+		    !nilfs_test_opt(nilfs, BAD_FTL)) {
 			down_write(&nilfs->ns_sem);
 			err = -EIO;
 			sbp = nilfs_prepare_super(sci->sc_super,

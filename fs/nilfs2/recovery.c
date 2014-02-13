@@ -55,6 +55,12 @@ struct nilfs_recovery_block {
 	struct list_head list;
 };
 
+/* work structure log cursor search */
+struct nilfs_seg_history {
+	struct list_head list;
+	u64 seq;
+	sector_t seg_start;
+};
 
 static int nilfs_warn_segment_error(int err)
 {
@@ -790,6 +796,254 @@ int nilfs_salvage_orphan_logs(struct the_nilfs *nilfs,
  failed:
 	nilfs_put_root(root);
 	return err;
+}
+
+static inline int nilfs_validate_segment_summary_fast(struct the_nilfs *nilfs,
+		struct nilfs_segment_summary *sum)
+{
+	u32 crc;
+	int crc_size = sizeof(struct nilfs_segment_summary) -
+			(sizeof(sum->ss_datasum) +
+			sizeof(sum->ss_sumsum) +
+			sizeof(sum->ss_sumsum_fast) +
+			sizeof(sum->ss_cno));
+
+	if (le32_to_cpu(sum->ss_magic) != NILFS_SEGSUM_MAGIC
+		|| le32_to_cpu(sum->ss_nblocks) == 0
+		|| le32_to_cpu(sum->ss_nblocks) >
+			nilfs->ns_blocks_per_segment)
+		return -1;
+
+	crc = crc32_le(nilfs->ns_crc_seed,
+		       (unsigned char *)sum + sizeof(sum->ss_datasum) +
+		       sizeof(sum->ss_sumsum), crc_size);
+
+	if (le32_to_cpu(sum->ss_sumsum_fast) != crc)
+		return -1;
+
+	return 0;
+}
+
+static void nilfs_add_segment_history(struct list_head *head,
+		u64 seq, sector_t seg_start)
+{
+	struct nilfs_seg_history *history, *last;
+
+	list_for_each_entry(history, head, list) {
+		if (seq > history->seq) {
+			last = list_last_entry(head, struct nilfs_seg_history,
+					list);
+			last->seq = seq;
+			last->seg_start = seg_start;
+			list_move_tail(&last->list, &history->list);
+			break;
+		}
+	}
+}
+
+static int nilfs_init_segment_history(struct list_head *head,
+		int hist_size, u64 seq, sector_t seg_start)
+{
+	struct nilfs_seg_history *history;
+	int i;
+
+	for (i = 0; i < hist_size; ++i) {
+		history = kmalloc(sizeof(struct nilfs_seg_history), GFP_NOFS);
+		if (unlikely(!history))
+			return -ENOMEM;
+
+		history->seq = seq;
+		history->seg_start = seg_start;
+		list_add_tail(&history->list, head);
+	}
+
+	return 0;
+}
+
+static void nilfs_destroy_segment_history(struct list_head *head)
+{
+	while (!list_empty(head)) {
+		struct nilfs_seg_history *hist;
+
+		hist = list_first_entry(head, struct nilfs_seg_history, list);
+		list_del(&hist->list);
+		kfree(hist);
+	}
+}
+
+static int nilfs_search_partial_log_cursor(struct the_nilfs *nilfs,
+		u64 seq, sector_t pseg_start, sector_t *dest)
+{
+	struct buffer_head *bh_sum = NULL;
+	struct nilfs_segment_summary *sum;
+	sector_t seg_start, seg_end;
+	int ret = -1;
+
+	nilfs_get_segment_range(nilfs,
+			nilfs_get_segnum_of_block(nilfs, pseg_start),
+			&seg_start, &seg_end);
+
+	while (pseg_start < seg_end && pseg_start >= seg_start) {
+		brelse(bh_sum);
+
+		bh_sum = nilfs_read_log_header(nilfs, pseg_start, &sum);
+		if (!bh_sum)
+			return -EIO;
+
+		if (nilfs_validate_segment_summary_fast(nilfs, sum))
+			goto out;
+
+		if (le64_to_cpu(sum->ss_seq) != seq)
+			goto out;
+
+		if (le16_to_cpu(sum->ss_flags) & NILFS_SS_SR) {
+			*dest = pseg_start;
+			ret = 0;
+			goto out;
+		}
+
+		pseg_start += le32_to_cpu(sum->ss_nblocks);
+	}
+
+out:
+	brelse(bh_sum);
+	return ret;
+}
+
+static int nilfs_search_validate_log_cursor(struct the_nilfs *nilfs,
+		sector_t seg_start, u64 seq)
+{
+	struct buffer_head *bh_sum;
+	struct nilfs_segment_summary *sum;
+	sector_t b;
+	int ret;
+
+	bh_sum = nilfs_read_log_header(nilfs, seg_start, &sum);
+	if (!bh_sum) {
+		printk(KERN_ERR "NILFS error searching for cursor.\n");
+		return -EIO;
+	}
+
+	b = seg_start;
+	while (b < seg_start + le32_to_cpu(sum->ss_nblocks))
+		__breadahead(nilfs->ns_bdev, b++, nilfs->ns_blocksize);
+
+	ret = nilfs_validate_log(nilfs, seq, bh_sum, sum);
+	if (ret) {
+		ret = -1;
+	} else {
+		/* update nilfs log cursor */
+		nilfs->ns_last_pseg = seg_start;
+		nilfs->ns_last_cno = le64_to_cpu(sum->ss_cno);
+		nilfs->ns_last_seq = seq;
+
+		nilfs->ns_prev_seq = nilfs->ns_last_seq;
+		nilfs->ns_seg_seq = nilfs->ns_last_seq;
+		nilfs->ns_segnum =
+			nilfs_get_segnum_of_block(nilfs, nilfs->ns_last_pseg);
+		nilfs->ns_cno = nilfs->ns_last_cno + 1;
+	}
+
+	brelse(bh_sum);
+	return ret;
+}
+
+/**
+ * nilfs_search_log_cursor - search the latest log cursor
+ * @nilfs: the_nilfs
+ * @hist_size: size of the segment history used for recovery
+ *
+ * Description: nilfs_search_log_cursor() performs a linear scan of all full
+ * segment summary blocks and updates the cursor of the nilfs object if a more
+ * recent segment is found. The cursor is only updated if the segment is valid
+ * and there is a super root present. The goal is to quickly find the latest
+ * segment and leave the rest of the heavy lifting to the normal recovery
+ * process.
+ *
+ * Return Value: On success, 0 is returned.  On error, one of the following
+ * negative error code is returned.
+ *
+ * %-EIO - I/O error
+ *
+ * %-ENOMEM - Insufficient memory available.
+ */
+int nilfs_search_log_cursor(struct the_nilfs *nilfs, int hist_size)
+{
+	u64 segnum, segahead, nsegments = nilfs->ns_nsegments;
+	struct buffer_head *bh_sum = NULL;
+	struct nilfs_segment_summary *sum;
+	struct nilfs_seg_history *hist_entry;
+	LIST_HEAD(history);
+	sector_t seg_start = 0, seg_end;
+	int ret;
+
+	printk(KERN_WARNING "NILFS warning: searching for latest log\n");
+
+	for (segahead = 0; segahead < 64 && segahead < nsegments; ++segahead) {
+		nilfs_get_segment_range(nilfs, segahead, &seg_start, &seg_end);
+		__breadahead(nilfs->ns_bdev, seg_start, nilfs->ns_blocksize);
+	}
+
+	ret = nilfs_init_segment_history(&history, hist_size,
+			nilfs->ns_last_seq, 0);
+	if (ret < 0)
+		goto out_destroy;
+
+	for (segnum = 0; segnum < nsegments; ++segnum, ++segahead) {
+		brelse(bh_sum);
+
+		if (segahead < nsegments) {
+			nilfs_get_segment_range(nilfs, segahead,
+					&seg_start, &seg_end);
+			__breadahead(nilfs->ns_bdev, seg_start,
+					nilfs->ns_blocksize);
+		}
+
+		nilfs_get_segment_range(nilfs, segnum, &seg_start, &seg_end);
+
+		bh_sum = nilfs_read_log_header(nilfs, seg_start, &sum);
+		if (!bh_sum) {
+			printk(KERN_ERR "NILFS error searching for cursor.\n");
+			ret = -EIO;
+			goto out_destroy;
+		}
+
+		if (nilfs_validate_segment_summary_fast(nilfs, sum))
+			continue;
+
+		nilfs_add_segment_history(&history, le64_to_cpu(sum->ss_seq),
+				seg_start);
+	}
+	brelse(bh_sum);
+
+	hist_entry = list_first_entry(&history, struct nilfs_seg_history, list);
+	if (hist_entry->seg_start == 0 &&
+			hist_entry->seq == nilfs->ns_last_seq){
+		ret = 0;
+		goto out_destroy;
+	}
+
+	ret = -1;
+	list_for_each_entry(hist_entry, &history, list) {
+		if (hist_entry->seg_start == 0 ||
+				hist_entry->seq <= nilfs->ns_last_seq)
+			break;
+
+		if (nilfs_search_partial_log_cursor(nilfs,
+				hist_entry->seq, hist_entry->seg_start,
+				&seg_start) == 0) {
+
+			if (nilfs_search_validate_log_cursor(nilfs,
+				seg_start, hist_entry->seq) == 0) {
+				ret = 0;
+				break;
+			}
+		}
+	}
+
+out_destroy:
+	nilfs_destroy_segment_history(&history);
+	return ret;
 }
 
 /**

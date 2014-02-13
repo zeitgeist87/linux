@@ -237,6 +237,7 @@ void nilfs_detach_log_writer(struct super_block *sb);
 /* recovery.c */
 extern int nilfs_read_super_root_block(struct the_nilfs *, sector_t,
 				       struct buffer_head **, int);
+extern int nilfs_search_log_cursor(struct the_nilfs *nilfs, int hist_size);
 extern int nilfs_search_super_root(struct the_nilfs *,
 				   struct nilfs_recovery_info *);
 int nilfs_salvage_orphan_logs(struct the_nilfs *nilfs, struct super_block *sb,

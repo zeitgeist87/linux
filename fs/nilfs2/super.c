@@ -505,7 +505,7 @@ static int nilfs_sync_fs(struct super_block *sb, int wait)
 		err = nilfs_construct_segment(sb);
 
 	down_write(&nilfs->ns_sem);
-	if (nilfs_sb_dirty(nilfs)) {
+	if (nilfs_sb_dirty(nilfs) && !nilfs_test_opt(nilfs, BAD_FTL)) {
 		sbp = nilfs_prepare_super(sb, nilfs_sb_will_flip(nilfs));
 		if (likely(sbp)) {
 			nilfs_set_log_cursor(sbp[0], nilfs);
@@ -691,6 +691,8 @@ static int nilfs_show_options(struct seq_file *seq, struct dentry *dentry)
 		seq_puts(seq, ",norecovery");
 	if (nilfs_test_opt(nilfs, DISCARD))
 		seq_puts(seq, ",discard");
+	if (nilfs_test_opt(nilfs, BAD_FTL))
+		seq_puts(seq, ",bad_ftl");
 
 	return 0;
 }
@@ -712,7 +714,7 @@ static const struct super_operations nilfs_sops = {
 enum {
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_barrier, Opt_nobarrier, Opt_snapshot, Opt_order, Opt_norecovery,
-	Opt_discard, Opt_nodiscard, Opt_err,
+	Opt_discard, Opt_nodiscard, Opt_err, Opt_bad_ftl,
 };
 
 static match_table_t tokens = {
@@ -726,6 +728,7 @@ static match_table_t tokens = {
 	{Opt_norecovery, "norecovery"},
 	{Opt_discard, "discard"},
 	{Opt_nodiscard, "nodiscard"},
+	{Opt_bad_ftl, "bad_ftl"},
 	{Opt_err, NULL}
 };
 
@@ -786,6 +789,9 @@ static int parse_options(char *options, struct super_block *sb, int is_remount)
 			break;
 		case Opt_nodiscard:
 			nilfs_clear_opt(nilfs, DISCARD);
+			break;
+		case Opt_bad_ftl:
+			nilfs_set_opt(nilfs, BAD_FTL);
 			break;
 		default:
 			printk(KERN_ERR

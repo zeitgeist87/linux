@@ -214,9 +214,17 @@ int load_nilfs(struct the_nilfs *nilfs, struct super_block *sb)
 	unsigned int s_flags = sb->s_flags;
 	int really_read_only = bdev_read_only(nilfs->ns_bdev);
 	int valid_fs = nilfs_valid_fs(nilfs);
-	int err;
+	int err = -1, i, hist_size;
 
 	if (!valid_fs) {
+		if (nilfs_test_opt(nilfs, BAD_FTL)) {
+			hist_size = 64;
+			for (i = 0; i < 5 && err < 0; ++i) {
+				err = nilfs_search_log_cursor(nilfs, hist_size);
+				hist_size *= 2;
+			}
+		}
+
 		printk(KERN_WARNING "NILFS warning: mounting unchecked fs\n");
 		if (s_flags & MS_RDONLY) {
 			printk(KERN_INFO "NILFS: INFO: recovery "

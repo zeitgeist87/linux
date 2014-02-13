@@ -135,6 +135,8 @@ struct nilfs_super_root {
 #define NILFS_MOUNT_NORECOVERY		0x4000  /* Disable write access during
 						   mount-time recovery */
 #define NILFS_MOUNT_DISCARD		0x8000  /* Issue DISCARD requests */
+#define NILFS_MOUNT_BAD_FTL		0x10000 /* Only write super block
+						   at umount time */
 
 
 /**
@@ -407,7 +409,7 @@ union nilfs_binfo {
  * @ss_nblocks: number of blocks
  * @ss_nfinfo: number of finfo structures
  * @ss_sumbytes: total size of segment summary in bytes
- * @ss_pad: padding
+ * @ss_sumsum_fast: small sum of only the nilfs_segment_summary
  * @ss_cno: checkpoint number
  */
 struct nilfs_segment_summary {
@@ -422,7 +424,7 @@ struct nilfs_segment_summary {
 	__le32 ss_nblocks;
 	__le32 ss_nfinfo;
 	__le32 ss_sumbytes;
-	__le32 ss_pad;
+	__le32 ss_sumsum_fast;
 	__le64 ss_cno;
 	/* array of finfo structures */
 };

@@ -158,6 +158,9 @@ void nilfs_segbuf_fill_in_segsum(struct nilfs_segment_buffer *segbuf)
 {
 	struct nilfs_segment_summary *raw_sum;
 	struct buffer_head *bh_sum;
+	struct the_nilfs *nilfs = segbuf->sb_super->s_fs_info;
+	u32 crc;
+	int size;
 
 	bh_sum = list_entry(segbuf->sb_segsum_buffers.next,
 			    struct buffer_head, b_assoc_buffers);
@@ -172,8 +175,19 @@ void nilfs_segbuf_fill_in_segsum(struct nilfs_segment_buffer *segbuf)
 	raw_sum->ss_nblocks  = cpu_to_le32(segbuf->sb_sum.nblocks);
 	raw_sum->ss_nfinfo   = cpu_to_le32(segbuf->sb_sum.nfinfo);
 	raw_sum->ss_sumbytes = cpu_to_le32(segbuf->sb_sum.sumbytes);
-	raw_sum->ss_pad      = 0;
 	raw_sum->ss_cno      = cpu_to_le64(segbuf->sb_sum.cno);
+
+	size = sizeof(struct nilfs_segment_summary) -
+		(sizeof(raw_sum->ss_datasum) +
+		sizeof(raw_sum->ss_sumsum) +
+		sizeof(raw_sum->ss_sumsum_fast) +
+		sizeof(raw_sum->ss_cno));
+
+	crc = crc32_le(nilfs->ns_crc_seed,
+		       (unsigned char *)raw_sum + sizeof(raw_sum->ss_datasum) +
+		       sizeof(raw_sum->ss_sumsum), size);
+
+	raw_sum->ss_sumsum_fast = cpu_to_le32(crc);
 }
 
 /*
