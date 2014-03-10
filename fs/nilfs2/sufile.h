@@ -28,6 +28,23 @@
 #include <linux/nilfs2_fs.h>
 #include "mdt.h"
 
+static inline int
+nilfs_sufile_lastdec_supported(const struct inode *sufile)
+{
+	return NILFS_MDT(sufile)->mi_entry_size ==
+			sizeof(struct nilfs_segment_usage);
+}
+
+static inline void
+nilfs_sufile_segment_usage_set_clean(const struct inode *sufile,
+		struct nilfs_segment_usage *su)
+{
+	su->su_lastmod = cpu_to_le64(0);
+	su->su_nblocks = cpu_to_le32(0);
+	su->su_flags = cpu_to_le32(0);
+	if (nilfs_sufile_lastdec_supported(sufile))
+		su->su_lastdec = cpu_to_le64(0);
+}
 
 static inline unsigned long nilfs_sufile_get_nsegments(struct inode *sufile)
 {
@@ -41,6 +58,7 @@ int nilfs_sufile_alloc(struct inode *, __u64 *);
 int nilfs_sufile_mark_dirty(struct inode *sufile, __u64 segnum);
 int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
 				   unsigned long nblocks, time_t modtime);
+int nilfs_sufile_add_segment_usage(struct inode *, __u64, __s64, time_t);
 int nilfs_sufile_get_stat(struct inode *, struct nilfs_sustat *);
 ssize_t nilfs_sufile_get_suinfo(struct inode *, __u64, void *, unsigned,
 				size_t);
