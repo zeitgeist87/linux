@@ -475,13 +475,13 @@ struct nilfs_palloc_group_desc {
  * @de_blocknr: block number
  * @de_start: start checkpoint number
  * @de_end: end checkpoint number
- * @de_rsv: reserved for future use
+ * @de_ss: one of the snapshots the block belongs to
  */
 struct nilfs_dat_entry {
 	__le64 de_blocknr;
 	__le64 de_start;
 	__le64 de_end;
-	__le64 de_rsv;
+	__le64 de_ss;
 };
 
 #define NILFS_MIN_DAT_ENTRY_SIZE	32

@@ -28,6 +28,7 @@
 #include <linux/nilfs2_fs.h>
 #include "mdt.h"
 #include "cpfile.h"
+#include "sufile.h"
 
 
 static inline unsigned long
@@ -584,6 +585,7 @@ static int nilfs_cpfile_set_snapshot(struct inode *cpfile, __u64 cno)
 	struct nilfs_cpfile_header *header;
 	struct nilfs_checkpoint *cp;
 	struct nilfs_snapshot_list *list;
+	struct the_nilfs *nilfs = cpfile->i_sb->s_fs_info;
 	__u64 curr, prev;
 	unsigned long curr_blkoff, prev_blkoff;
 	void *kaddr;
@@ -681,6 +683,8 @@ static int nilfs_cpfile_set_snapshot(struct inode *cpfile, __u64 cno)
 	mark_buffer_dirty(header_bh);
 	nilfs_mdt_mark_dirty(cpfile);
 
+	nilfs_dat_scan_inc_ss(nilfs->ns_dat, cno);
+
 	brelse(prev_bh);
 
  out_curr:
@@ -703,6 +707,7 @@ static int nilfs_cpfile_clear_snapshot(struct inode *cpfile, __u64 cno)
 	struct nilfs_cpfile_header *header;
 	struct nilfs_checkpoint *cp;
 	struct nilfs_snapshot_list *list;
+	struct the_nilfs *nilfs = cpfile->i_sb->s_fs_info;
 	__u64 next, prev;
 	void *kaddr;
 	int ret;
@@ -783,6 +788,8 @@ static int nilfs_cpfile_clear_snapshot(struct inode *cpfile, __u64 cno)
 	mark_buffer_dirty(cp_bh);
 	mark_buffer_dirty(header_bh);
 	nilfs_mdt_mark_dirty(cpfile);
+
+	nilfs_dat_scan_dec_ss(nilfs->ns_dat, cno, prev, next);
 
 	brelse(prev_bh);
 
