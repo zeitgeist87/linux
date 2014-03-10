@@ -453,6 +453,8 @@ void nilfs_sufile_do_scrap(struct inode *sufile, __u64 segnum,
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(1UL << NILFS_SEGMENT_USAGE_DIRTY);
+	if (nilfs_sufile_lastdec_supported(sufile))
+		su->su_lastdec = cpu_to_le64(0);
 	kunmap_atomic(kaddr);
 
 	nilfs_sufile_mod_counter(header_bh, clean ? (u64)-1 : 0, dirty ? 0 : 1);
@@ -482,7 +484,7 @@ void nilfs_sufile_do_free(struct inode *sufile, __u64 segnum,
 	WARN_ON(!nilfs_segment_usage_dirty(su));
 
 	sudirty = nilfs_segment_usage_dirty(su);
-	nilfs_segment_usage_set_clean(su);
+	nilfs_sufile_segment_usage_set_clean(sufile, su);
 	kunmap_atomic(kaddr);
 	mark_buffer_dirty(su_bh);
 
@@ -544,6 +546,75 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
 	brelse(bh);
 
  out_sem:
+	up_write(&NILFS_MDT(sufile)->mi_sem);
+	return ret;
+}
+
+/**
+ * nilfs_sufile_add_segment_usage - decrement usage of a segment
+ * @sufile: inode of segment usage file
+ * @segnum: segment number
+ * @value: value to add to su_nblocks
+ * @dectime: current time
+ *
+ * Description: nilfs_sufile_add_segment_usage() adds a signed value to the
+ * su_nblocks field of the segment usage information of @segnum. It ensures
+ * that the result is bigger than 0 and smaller or equal to the maximum number
+ * of blocks per segment
+ *
+ * Return Value: On success, 0 is returned. On error, one of the following
+ * negative error codes is returned.
+ *
+ * %-ENOMEM - Insufficient memory available.
+ *
+ * %-EIO - I/O error
+ *
+ * %-ENOENT - the specified block does not exist (hole block)
+ */
+int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
+				   __s64 value, time_t dectime)
+{
+	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
+	struct buffer_head *bh;
+	struct nilfs_segment_usage *su;
+	void *kaddr;
+	int ret;
+
+	if (value == 0)
+		return 0;
+
+	down_write(&NILFS_MDT(sufile)->mi_sem);
+
+	ret = nilfs_sufile_get_segment_usage_block(sufile, segnum, 0, &bh);
+	if (ret < 0)
+		goto out_sem;
+
+	kaddr = kmap_atomic(bh->b_page);
+	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, bh, kaddr);
+	WARN_ON(nilfs_segment_usage_error(su));
+
+	value += le32_to_cpu(su->su_nblocks);
+	if (value < 0)
+		value = 0;
+	if (value > nilfs->ns_blocks_per_segment)
+		value = nilfs->ns_blocks_per_segment;
+
+	if (value == le32_to_cpu(su->su_nblocks)) {
+		kunmap_atomic(kaddr);
+		goto out_brelse;
+	}
+
+	su->su_nblocks = cpu_to_le32(value);
+	if (dectime && nilfs_sufile_lastdec_supported(sufile))
+		su->su_lastdec = cpu_to_le64(dectime);
+	kunmap_atomic(kaddr);
+
+	mark_buffer_dirty(bh);
+	nilfs_mdt_mark_dirty(sufile);
+
+out_brelse:
+	brelse(bh);
+out_sem:
 	up_write(&NILFS_MDT(sufile)->mi_sem);
 	return ret;
 }
@@ -698,7 +769,8 @@ static int nilfs_sufile_truncate_range(struct inode *sufile,
 		nc = 0;
 		for (su = su2, j = 0; j < n; j++, su = (void *)su + susz) {
 			if (nilfs_segment_usage_error(su)) {
-				nilfs_segment_usage_set_clean(su);
+				nilfs_sufile_segment_usage_set_clean(sufile,
+						su);
 				nc++;
 			}
 		}
@@ -858,6 +930,13 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 			if (nilfs_segment_is_active(nilfs, segnum + j))
 				si->sui_flags |=
 					(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
+			if (sisz >= sizeof(struct nilfs_suinfo)) {
+				if (susz >= sizeof(struct nilfs_segment_usage))
+					si->sui_lastdec =
+						le64_to_cpu(su->su_lastdec);
+				else
+					si->sui_lastdec = 0;
+			}
 		}
 		kunmap_atomic(kaddr);
 		brelse(su_bh);
@@ -934,6 +1013,9 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 
 		if (nilfs_suinfo_update_lastmod(sup))
 			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
+
+		if (nilfs_suinfo_update_lastdec(sup))
+			su->su_lastdec = cpu_to_le64(sup->sup_sui.sui_lastdec);
 
 		if (nilfs_suinfo_update_nblocks(sup))
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
