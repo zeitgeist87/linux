@@ -382,6 +382,69 @@ int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr)
 }
 
 /**
+ * nilfs_dat_clean_snapshot_flag - check flags used by snapshots
+ * @dat: DAT file inode
+ * @vblocknr: virtual block number
+ *
+ * Description: nilfs_dat_clean_snapshot_flag() changes the flags from
+ * NILFS_CNO_MAX to 0 if necessary, so that segment usage is accurately
+ * counted. NILFS_CNO_MAX indicates, that the corresponding block belongs
+ * to some snapshot, but was already decremented. If the segment usage info
+ * is changed with NILFS_IOCTL_SET_SUINFO and the number of blocks is updated,
+ * then these blocks would never be decremented and there are scenarios where
+ * the corresponding segments would starve (never be cleaned).
+ *
+ * Return Value: On success, 0 is returned. On error, one of the following
+ * negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ */
+int nilfs_dat_clean_snapshot_flag(struct inode *dat, __u64 vblocknr)
+{
+	struct buffer_head *entry_bh;
+	struct nilfs_dat_entry *entry;
+	void *kaddr;
+	int ret;
+
+	ret = nilfs_palloc_get_entry_block(dat, vblocknr, 0, &entry_bh);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * The given disk block number (blocknr) is not yet written to
+	 * the device at this point.
+	 *
+	 * To prevent nilfs_dat_translate() from returning the
+	 * uncommitted block number, this makes a copy of the entry
+	 * buffer and redirects nilfs_dat_translate() to the copy.
+	 */
+	if (!buffer_nilfs_redirected(entry_bh)) {
+		ret = nilfs_mdt_freeze_buffer(dat, entry_bh);
+		if (ret) {
+			brelse(entry_bh);
+			return ret;
+		}
+	}
+
+	kaddr = kmap_atomic(entry_bh->b_page);
+	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
+	if (entry->de_ss == cpu_to_le64(NILFS_CNO_MAX)) {
+		entry->de_ss = cpu_to_le64(0);
+		kunmap_atomic(kaddr);
+		mark_buffer_dirty(entry_bh);
+		nilfs_mdt_mark_dirty(dat);
+	} else {
+		kunmap_atomic(kaddr);
+	}
+
+	brelse(entry_bh);
+
+	return 0;
+}
+
+/**
  * nilfs_dat_translate - translate a virtual block number to a block number
  * @dat: DAT file inode
  * @vblocknr: virtual block number
