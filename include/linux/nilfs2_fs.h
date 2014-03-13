@@ -876,6 +876,35 @@ struct nilfs_vdesc {
 	__u32 vd_pad;
 };
 
+/* vdesc flag */
+enum {
+	NILFS_VDESC_DATA,
+	NILFS_VDESC_NODE,
+	NILFS_VDESC_SNAPSHOT,
+	/* ... */
+};
+
+#define NILFS_VDESC_FNS(flag, name)					\
+static inline void							\
+nilfs_vdesc_set_##name(struct nilfs_vdesc *su)				\
+{									\
+	su->vd_flags = su->vd_flags | (1UL << NILFS_VDESC_##flag);	\
+}									\
+static inline void							\
+nilfs_vdesc_clear_##name(struct nilfs_vdesc *su)			\
+{									\
+	su->vd_flags = su->vd_flags &	~(1UL << NILFS_VDESC_##flag);	\
+}									\
+static inline int							\
+nilfs_vdesc_##name(const struct nilfs_vdesc *su)			\
+{									\
+	return !!(su->vd_flags & (1UL << NILFS_VDESC_##flag));		\
+}
+
+NILFS_VDESC_FNS(DATA, data)
+NILFS_VDESC_FNS(NODE, node)
+NILFS_VDESC_FNS(SNAPSHOT, snapshot)
+
 /**
  * struct nilfs_bdesc - descriptor of disk block number
  * @bd_ino: inode number
@@ -922,5 +951,7 @@ struct nilfs_bdesc {
 	_IOW(NILFS_IOCTL_IDENT, 0x8C, __u64[2])
 #define NILFS_IOCTL_SET_SUINFO  \
 	_IOW(NILFS_IOCTL_IDENT, 0x8D, struct nilfs_argv)
+#define NILFS_IOCTL_CLEAN_SNAPSHOT_FLAGS  \
+	_IOW(NILFS_IOCTL_IDENT, 0x8F, struct nilfs_argv)
 
 #endif	/* _LINUX_NILFS_FS_H */

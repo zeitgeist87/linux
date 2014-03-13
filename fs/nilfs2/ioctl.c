@@ -578,7 +578,7 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 	struct buffer_head *bh;
 	int ret;
 
-	if (vdesc->vd_flags == 0)
+	if (nilfs_vdesc_data(vdesc))
 		ret = nilfs_gccache_submit_read_data(
 			inode, vdesc->vd_offset, vdesc->vd_blocknr,
 			vdesc->vd_vblocknr, &bh);
@@ -984,6 +984,96 @@ out:
 }
 
 /**
+ * nilfs_ioctl_clean_snapshot_flags - clean dat entries with invalid de_ss
+ * @inode: inode object
+ * @filp: file object
+ * @cmd: ioctl's request code
+ * @argp: pointer on argument from userspace
+ *
+ * Description: nilfs_ioctl_clean_snapshot_flags() sets DAT entries with de_ss
+ * values of NILFS_CNO_MAX to 0. NILFS_CNO_MAX indicates, that the
+ * corresponding block belongs to some snapshot, but was already decremented.
+ * If the segment usage info is changed with NILFS_IOCTL_SET_SUINFO and the
+ * number of blocks is updated, then these blocks would never be decremented
+ * and there are scenarios where the corresponding segments would starve (never
+ * be cleaned).
+ *
+ * Return Value: On success, 0 is returned or error code, otherwise.
+ */
+static int nilfs_ioctl_clean_snapshot_flags(struct inode *inode,
+					    struct file *filp,
+					    unsigned int cmd,
+					    void __user *argp)
+{
+	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
+	struct nilfs_transaction_info ti;
+	struct nilfs_argv argv;
+	struct nilfs_vdesc *vdesc;
+	size_t len, i;
+	void __user *base;
+	void *kbuf;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
+
+	ret = -EFAULT;
+	if (copy_from_user(&argv, argp, sizeof(struct nilfs_argv)))
+		goto out;
+
+	ret = -EINVAL;
+	if (argv.v_size != sizeof(struct nilfs_vdesc))
+		goto out;
+	if (argv.v_nmembs > UINT_MAX / sizeof(struct nilfs_vdesc))
+		goto out;
+
+	len = argv.v_size * argv.v_nmembs;
+	if (!len) {
+		ret = 0;
+		goto out;
+	}
+
+	base = (void __user *)(unsigned long)argv.v_base;
+	kbuf = vmalloc(len);
+	if (!kbuf) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(kbuf, base, len)) {
+		ret = -EFAULT;
+		goto out_free;
+	}
+
+	ret = nilfs_transaction_begin(inode->i_sb, &ti, 0);
+	if (unlikely(ret))
+		goto out_free;
+
+	for (i = 0, vdesc = kbuf; i < argv.v_nmembs; ++i, ++vdesc) {
+		if (nilfs_vdesc_snapshot(vdesc)) {
+			ret = nilfs_dat_clean_snapshot_flag(nilfs->ns_dat,
+					vdesc->vd_vblocknr);
+			if (ret) {
+				nilfs_transaction_abort(inode->i_sb);
+				goto out_free;
+			}
+		}
+	}
+
+	nilfs_transaction_commit(inode->i_sb);
+
+out_free:
+	vfree(kbuf);
+out:
+	mnt_drop_write_file(filp);
+	return ret;
+}
+
+/**
  * nilfs_ioctl_sync - make a checkpoint
  * @inode: inode object
  * @filp: file object
@@ -1332,6 +1422,8 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_bdescs(inode, filp, cmd, argp);
 	case NILFS_IOCTL_CLEAN_SEGMENTS:
 		return nilfs_ioctl_clean_segments(inode, filp, cmd, argp);
+	case NILFS_IOCTL_CLEAN_SNAPSHOT_FLAGS:
+		return nilfs_ioctl_clean_snapshot_flags(inode, filp, cmd, argp);
 	case NILFS_IOCTL_SYNC:
 		return nilfs_ioctl_sync(inode, filp, cmd, argp);
 	case NILFS_IOCTL_RESIZE:
@@ -1368,6 +1460,7 @@ long nilfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case NILFS_IOCTL_GET_VINFO:
 	case NILFS_IOCTL_GET_BDESCS:
 	case NILFS_IOCTL_CLEAN_SEGMENTS:
+	case NILFS_IOCTL_CLEAN_SNAPSHOT_FLAGS:
 	case NILFS_IOCTL_SYNC:
 	case NILFS_IOCTL_RESIZE:
 	case NILFS_IOCTL_SET_ALLOC_RANGE:
