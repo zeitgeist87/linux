@@ -881,6 +881,7 @@ enum {
 	NILFS_VDESC_DATA,
 	NILFS_VDESC_NODE,
 	NILFS_VDESC_SNAPSHOT,
+	NILFS_VDESC_PROTECTION_PERIOD,
 	/* ... */
 };
 
@@ -904,6 +905,7 @@ nilfs_vdesc_##name(const struct nilfs_vdesc *su)			\
 NILFS_VDESC_FNS(DATA, data)
 NILFS_VDESC_FNS(NODE, node)
 NILFS_VDESC_FNS(SNAPSHOT, snapshot)
+NILFS_VDESC_FNS(PROTECTION_PERIOD, protection_period)
 
 /**
  * struct nilfs_bdesc - descriptor of disk block number
