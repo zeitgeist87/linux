@@ -445,6 +445,64 @@ int nilfs_dat_clean_snapshot_flag(struct inode *dat, __u64 vblocknr)
 }
 
 /**
+ * nilfs_dat_is_live - checks if the virtual block number is alive
+ * @dat: DAT file inode
+ * @vblocknr: virtual block number
+ *
+ * Description: nilfs_dat_is_live() looks up the DAT entry for @vblocknr and
+ * determines if the corresponding block is alive or not. This check ignores
+ * snapshots and protection periods.
+ *
+ * Return Value: 1 if vblocknr is alive and 0 otherwise. On error, one
+ * of the following negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ *
+ * %-ENOENT - A block number associated with @vblocknr does not exist.
+ */
+int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr)
+{
+	struct buffer_head *entry_bh, *bh;
+	struct nilfs_dat_entry *entry;
+	sector_t blocknr;
+	void *kaddr;
+	int ret;
+
+	ret = nilfs_palloc_get_entry_block(dat, vblocknr, 0, &entry_bh);
+	if (ret < 0)
+		return ret;
+
+	if (!nilfs_doing_gc() && buffer_nilfs_redirected(entry_bh)) {
+		bh = nilfs_mdt_get_frozen_buffer(dat, entry_bh);
+		if (bh) {
+			WARN_ON(!buffer_uptodate(bh));
+			brelse(entry_bh);
+			entry_bh = bh;
+		}
+	}
+
+	kaddr = kmap_atomic(entry_bh->b_page);
+	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
+	blocknr = le64_to_cpu(entry->de_blocknr);
+	if (blocknr == 0) {
+		ret = -ENOENT;
+		goto out;
+	}
+
+
+	if (entry->de_end == cpu_to_le64(NILFS_CNO_MAX))
+		ret = 1;
+	else
+		ret = 0;
+out:
+	kunmap_atomic(kaddr);
+	brelse(entry_bh);
+	return ret;
+}
+
+/**
  * nilfs_dat_translate - translate a virtual block number to a block number
  * @dat: DAT file inode
  * @vblocknr: virtual block number

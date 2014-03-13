@@ -612,6 +612,12 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 		brelse(bh);
 		return -EEXIST;
 	}
+
+	if (nilfs_vdesc_snapshot(vdesc))
+		set_buffer_nilfs_snapshot(bh);
+	if (nilfs_vdesc_protection_period(vdesc))
+		set_buffer_nilfs_protection_period(bh);
+
 	list_add_tail(&bh->b_assoc_buffers, buffers);
 	return 0;
 }

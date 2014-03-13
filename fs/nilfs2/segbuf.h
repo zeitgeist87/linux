@@ -83,6 +83,8 @@ struct nilfs_segment_buffer {
 	sector_t		sb_fseg_start, sb_fseg_end;
 	sector_t		sb_pseg_start;
 	unsigned		sb_rest_blocks;
+	__u32			sb_su_blocks_cancel;
+	__s64			sb_su_blocks;
 
 	/* Buffers */
 	struct list_head	sb_segsum_buffers;
@@ -122,6 +124,8 @@ void nilfs_segbuf_map(struct nilfs_segment_buffer *, __u64, unsigned long,
 		      struct the_nilfs *);
 void nilfs_segbuf_map_cont(struct nilfs_segment_buffer *segbuf,
 			   struct nilfs_segment_buffer *prev);
+int nilfs_segbuf_set_sui(struct nilfs_segment_buffer *segbuf,
+			 struct the_nilfs *nilfs);
 void nilfs_segbuf_set_next_segnum(struct nilfs_segment_buffer *, __u64,
 				  struct the_nilfs *);
 int nilfs_segbuf_reset(struct nilfs_segment_buffer *, unsigned, time_t, __u64);
