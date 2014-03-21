@@ -1376,7 +1376,7 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 	int ret;
 
 	list_for_each_entry(segbuf, &sci->sc_segbufs, sb_list) {
-		live_blocks = segbuf->sb_sum.nfileblk + segbuf->sb_su_blocks;
+		live_blocks = segbuf->sb_sum.nfileblk + segbuf->sb_su_nblocks;
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
 						     sci->sc_seg_ctime);
@@ -1392,7 +1392,7 @@ static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
 	segbuf = NILFS_FIRST_SEGBUF(logs);
 
 	ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
-					segbuf->sb_su_blocks_cancel, 0);
+					segbuf->sb_su_nblocks_cancel, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
 
 	list_for_each_entry_continue(segbuf, logs, sb_list) {
@@ -1479,6 +1479,105 @@ static void nilfs_list_replace_buffer(struct buffer_head *old_bh,
 	/* The caller must release old_bh */
 }
 
+struct nilfs_mod_segusg_state {
+	ino_t ino;
+	__u64 segnum;
+	__u64 modtime;
+	__u64 maxmodtime;
+	__u32 nblocks;
+};
+
+/**
+ * nilfs_segctor_mod_segusg_gc - adjust nblocks for the current segment
+ * @dat: dat inode
+ * @segbuf: currtent segment buffer
+ * @bh: current buffer head
+ *
+ * Description: nilfs_segctor_mod_segusg_gc() is called if the inode to which
+ * @bh belongs is a GC-Inode. In that case it is not necessary to decrement
+ * the previous segment, because at the end of the GC process it will be
+ * freed anyway. It is however necessary to correct the nblocks count
+ * of the current segment for blocks, that were copied because of the
+ * protection period. It is assumed, that @bh->b_blocknr contains a virtual
+ * block number, which is only true if @bh is part of a GC-Inode.
+ */
+static void nilfs_segctor_mod_segusg_gc(struct inode *dat,
+					struct nilfs_segment_buffer *segbuf,
+					struct buffer_head *bh) {
+	/* check again if gc blocks are alive */
+	if (!buffer_nilfs_snapshot(bh) &&
+	   (buffer_nilfs_protection_period(bh) ||
+	   !nilfs_dat_is_live(dat, bh->b_blocknr, NULL)))
+			segbuf->sb_su_nblocks--;
+}
+
+/**
+ * nilfs_segctor_mod_segusg_nongc - adjust nblocks for previous segments
+ * @nilfs: the nilfs object
+ * @segbuf: the current segment buffer
+ * @bh: the current buffer head
+ * @mss: object that contains variables for modifying the segment usage
+ *
+ * Description: nilfs_segctor_mod_segusg_nongc() is called before a block
+ * gets overwritten, so that the @bh->b_blocknr still points to old location.
+ * It decrements the nblocks counter of the segment that belongs to the old
+ * location, so that the block is considered to be reclaimable in its old
+ * and live in its new location. The @bh->b_blocknr value of node blocks can
+ * contain virtual block numbers, that aren't mapped yet, so they must be
+ * ignored. To minimize the number of calls to nilfs_sufile_add_segment_usage(),
+ * the blocks that belong to the same segment are counted up in @mss->nblocks
+ * and decremented at once.
+ */
+static void nilfs_segctor_mod_segusg_nongc(struct the_nilfs *nilfs,
+					   struct nilfs_segment_buffer *segbuf,
+					   struct buffer_head *bh,
+					   struct nilfs_mod_segusg_state *mss) {
+	__u64 segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
+
+	if (segnum >= nilfs->ns_nsegments ||
+	   (mss->ino != NILFS_DAT_INO &&
+	   buffer_nilfs_node(bh)))
+		return;
+
+	if (segnum != mss->segnum) {
+		if (mss->nblocks)
+			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+						       mss->segnum,
+						       -((__s64)mss->nblocks),
+						       mss->maxmodtime);
+		mss->segnum = segnum;
+		mss->maxmodtime = mss->modtime;
+		mss->nblocks = 0;
+	}
+
+
+	if (segnum == segbuf->sb_segnum)
+		segbuf->sb_su_nblocks--;
+	else
+		++mss->nblocks;
+
+}
+
+static void nilfs_segctor_mod_segusg_final(struct the_nilfs *nilfs,
+					   struct nilfs_mod_segusg_state *mss) {
+	if (mss->nblocks)
+		nilfs_sufile_add_segment_usage(nilfs->ns_sufile, mss->segnum,
+				-((__s64)mss->nblocks), mss->maxmodtime);
+}
+
+static void nilfs_segctor_mod_segusg(struct the_nilfs *nilfs,
+				     struct nilfs_segment_buffer *segbuf,
+				     struct buffer_head *bh,
+				     struct nilfs_mod_segusg_state *mss,
+				     int gc_inode) {
+	if (bh->b_blocknr > 0) {
+		if (gc_inode)
+			nilfs_segctor_mod_segusg_gc(nilfs->ns_dat, segbuf, bh);
+		else
+			nilfs_segctor_mod_segusg_nongc(nilfs, segbuf, bh, mss);
+	}
+}
+
 static int
 nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				     struct nilfs_segment_buffer *segbuf,
@@ -1495,13 +1594,14 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	struct nilfs_finfo *finfo = NULL;
 	union nilfs_binfo binfo;
 	struct buffer_head *bh, *bh_org;
+	struct nilfs_mod_segusg_state mss;
 	ino_t ino = 0;
 	int gc_inode = 0, err = 0;
-	__u64 segnum, prev_segnum = 0, dectime = 0, maxdectime = 0;
-	__u32 blkcount = 0;
 
 	if (!nfinfo)
 		goto out;
+
+	memset(&mss, 0, sizeof(struct nilfs_mod_segusg_state));
 
 	blocknr = segbuf->sb_pseg_start + segbuf->sb_sum.nsumblk;
 	ssp.bh = NILFS_SEGBUF_FIRST_BH(&segbuf->sb_segsum_buffers);
@@ -1514,6 +1614,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			finfo =	nilfs_segctor_map_segsum_entry(
 				sci, &ssp, sizeof(*finfo));
 			ino = le64_to_cpu(finfo->fi_ino);
+			mss.ino = ino;
 			nblocks = le32_to_cpu(finfo->fi_nblocks);
 			ndatablk = le32_to_cpu(finfo->fi_ndatablk);
 
@@ -1521,14 +1622,19 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 			ii = NILFS_I(inode);
 			gc_inode = test_bit(NILFS_I_GCINODE, &ii->i_state);
-			dectime = sci->sc_seg_ctime;
-			/* no update of lastdec necessary */
-			if (ino == NILFS_DAT_INO || ino == NILFS_SUFILE_INO ||
-					ino == NILFS_CPFILE_INO)
-				dectime = 0;
+			mss.modtime = sci->sc_seg_ctime;
+			/*
+			 * CPFILE, SUFILE and DATFILE have only one version
+			 * and they are not affected by the protection
+			 * period, so no update of su_nblocks_lastmod necessary
+			 */
+			if (ino == NILFS_DAT_INO ||
+			    ino == NILFS_SUFILE_INO ||
+			    ino == NILFS_CPFILE_INO)
+				mss.modtime = 0;
 
-			if (dectime > maxdectime)
-				maxdectime = dectime;
+			if (mss.modtime > mss.maxmodtime)
+				mss.maxmodtime = mss.modtime;
 
 			if (mode == SC_LSEG_DSYNC)
 				sc_op = &nilfs_sc_dsync_ops;
@@ -1538,37 +1644,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
-		segnum = nilfs_get_segnum_of_block(nilfs, bh->b_blocknr);
-		if (!gc_inode && bh->b_blocknr > 0 &&
-			(ino == NILFS_DAT_INO || !buffer_nilfs_node(bh)) &&
-				segnum < nilfs->ns_nsegments) {
-
-			if (segnum != prev_segnum) {
-				if (blkcount) {
-					nilfs_sufile_add_segment_usage(
-							nilfs->ns_sufile,
-							prev_segnum,
-							-((__s64)blkcount),
-							maxdectime);
-				}
-				prev_segnum = segnum;
-				blkcount = 0;
-				maxdectime = dectime;
-			}
-
-
-			if (segnum == segbuf->sb_segnum)
-				segbuf->sb_su_blocks--;
-			else
-				++blkcount;
-		} else if (gc_inode && bh->b_blocknr > 0) {
-			/* check again if gc blocks are alive */
-			if (!buffer_nilfs_snapshot(bh) &&
-					(buffer_nilfs_protection_period(bh) ||
-					!nilfs_dat_is_live(nilfs->ns_dat,
-							   bh->b_blocknr)))
-				segbuf->sb_su_blocks--;
-		}
+		nilfs_segctor_mod_segusg(nilfs, segbuf, bh, &mss, gc_inode);
 
 		bh_org = bh;
 		get_bh(bh_org);
@@ -1594,9 +1670,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			ndatablk--;
 	}
 
-	if (blkcount)
-		nilfs_sufile_add_segment_usage(nilfs->ns_sufile, prev_segnum,
-				-((__s64)blkcount), maxdectime);
+	nilfs_segctor_mod_segusg_final(nilfs, &mss);
+
  out:
 	return 0;
 

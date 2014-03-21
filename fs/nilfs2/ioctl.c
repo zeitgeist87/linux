@@ -669,12 +669,12 @@ static int nilfs_ioctl_move_blocks(struct super_block *sb,
 
 		do {
 			/*
-			 * old user space tools to not initialize vd_flags2
+			 * old user space tools to not initialize vd_blk_flags
 			 * check if it contains invalid flags
 			 */
-			if (vdesc->vd_flags2 &
+			if (vdesc->vd_blk_flags &
 					(~0UL << __NR_NILFS_VDESC_FIELDS))
-				vdesc->vd_flags2 = 0;
+				vdesc->vd_blk_flags = 0;
 
 			ret = nilfs_ioctl_move_inode_block(inode, vdesc,
 							   &buffers);
@@ -998,31 +998,28 @@ out:
 }
 
 /**
- * nilfs_ioctl_clean_snapshot_flags - clean dat entries with invalid de_ss
+ * nilfs_ioctl_set_inc_flags - set flag to indicate the blocks were incremented
  * @inode: inode object
  * @filp: file object
  * @cmd: ioctl's request code
  * @argp: pointer on argument from userspace
  *
- * Description: nilfs_ioctl_clean_snapshot_flags() sets DAT entries with de_ss
- * values of NILFS_CNO_MAX to 0. NILFS_CNO_MAX indicates, that the
- * corresponding block belongs to some snapshot, but was already decremented.
- * If the segment usage info is changed with NILFS_IOCTL_SET_SUINFO and the
- * number of blocks is updated, then these blocks would never be decremented
- * and there are scenarios where the corresponding segments would starve (never
- * be cleaned).
+ * Description: nilfs_ioctl_set_inc_flags() takes an array of vblocknrs
+ * and sets the flag NILFS_ENTRY_INC, if necessary, to indicate
+ * that the segment usage information of the segment to which the corresponding
+ * DAT-Entries belong were incremented.
  *
  * Return Value: On success, 0 is returned or error code, otherwise.
  */
-static int nilfs_ioctl_clean_snapshot_flags(struct inode *inode,
-					    struct file *filp,
-					    unsigned int cmd,
-					    void __user *argp)
+static int nilfs_ioctl_set_inc_flags(struct inode *inode,
+				     struct file *filp,
+				     unsigned int cmd,
+				     void __user *argp)
 {
 	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
 	struct nilfs_transaction_info ti;
 	struct nilfs_argv argv;
-	struct nilfs_vdesc *vdesc;
+	__u64 *vblocknrs;
 	size_t len, i;
 	void __user *base;
 	void *kbuf;
@@ -1040,9 +1037,9 @@ static int nilfs_ioctl_clean_snapshot_flags(struct inode *inode,
 		goto out;
 
 	ret = -EINVAL;
-	if (argv.v_size != sizeof(struct nilfs_vdesc))
+	if (argv.v_size != sizeof(__u64))
 		goto out;
-	if (argv.v_nmembs > UINT_MAX / sizeof(struct nilfs_vdesc))
+	if (argv.v_nmembs > UINT_MAX / sizeof(__u64))
 		goto out;
 
 	len = argv.v_size * argv.v_nmembs;
@@ -1067,14 +1064,11 @@ static int nilfs_ioctl_clean_snapshot_flags(struct inode *inode,
 	if (unlikely(ret))
 		goto out_free;
 
-	for (i = 0, vdesc = kbuf; i < argv.v_nmembs; ++i, ++vdesc) {
-		if (nilfs_vdesc_snapshot(vdesc)) {
-			ret = nilfs_dat_clean_snapshot_flag(nilfs->ns_dat,
-					vdesc->vd_vblocknr);
-			if (ret) {
-				nilfs_transaction_abort(inode->i_sb);
-				goto out_free;
-			}
+	for (i = 0, vblocknrs = kbuf; i < argv.v_nmembs; ++i) {
+		ret = nilfs_dat_set_inc(nilfs->ns_dat, vblocknrs[i]);
+		if (ret) {
+			nilfs_transaction_abort(inode->i_sb);
+			goto out_free;
 		}
 	}
 
@@ -1436,8 +1430,8 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_bdescs(inode, filp, cmd, argp);
 	case NILFS_IOCTL_CLEAN_SEGMENTS:
 		return nilfs_ioctl_clean_segments(inode, filp, cmd, argp);
-	case NILFS_IOCTL_CLEAN_SNAPSHOT_FLAGS:
-		return nilfs_ioctl_clean_snapshot_flags(inode, filp, cmd, argp);
+	case NILFS_IOCTL_SET_INC_FLAGS:
+		return nilfs_ioctl_set_inc_flags(inode, filp, cmd, argp);
 	case NILFS_IOCTL_SYNC:
 		return nilfs_ioctl_sync(inode, filp, cmd, argp);
 	case NILFS_IOCTL_RESIZE:
@@ -1474,7 +1468,7 @@ long nilfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case NILFS_IOCTL_GET_VINFO:
 	case NILFS_IOCTL_GET_BDESCS:
 	case NILFS_IOCTL_CLEAN_SEGMENTS:
-	case NILFS_IOCTL_CLEAN_SNAPSHOT_FLAGS:
+	case NILFS_IOCTL_SET_INC_FLAGS:
 	case NILFS_IOCTL_SYNC:
 	case NILFS_IOCTL_RESIZE:
 	case NILFS_IOCTL_SET_ALLOC_RANGE:

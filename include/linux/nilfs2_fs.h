@@ -614,13 +614,13 @@ struct nilfs_cpfile_header {
  * @su_lastmod: last modified timestamp
  * @su_nblocks: number of blocks in segment
  * @su_flags: flags
- * @su_lastdec: last decrement of su_nblocks timestamp
+ * @su_nblks_lastmod: last decrement of su_nblocks timestamp
  */
 struct nilfs_segment_usage {
 	__le64 su_lastmod;
 	__le32 su_nblocks;
 	__le32 su_flags;
-	__le64 su_lastdec;
+	__le64 su_nblks_lastmod;
 };
 
 #define NILFS_MIN_SEGMENT_USAGE_SIZE	16
@@ -665,7 +665,7 @@ nilfs_segment_usage_set_clean(struct nilfs_segment_usage *su)
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(0);
-	su->su_lastdec = cpu_to_le64(0);
+	su->su_nblks_lastmod = cpu_to_le64(0);
 }
 
 static inline int
@@ -697,13 +697,13 @@ struct nilfs_sufile_header {
  * @sui_lastmod: timestamp of last modification
  * @sui_nblocks: number of written blocks in segment
  * @sui_flags: segment usage flags
- * @sui_lastdec: last decrement of sui_nblocks timestamp
+ * @sui_nblks_lastmod: last decrement of sui_nblocks timestamp
  */
 struct nilfs_suinfo {
 	__u64 sui_lastmod;
 	__u32 sui_nblocks;
 	__u32 sui_flags;
-	__u64 sui_lastdec;
+	__u64 sui_nblks_lastmod;
 };
 
 #define NILFS_SUINFO_FNS(flag, name)					\
@@ -741,7 +741,7 @@ enum {
 	NILFS_SUINFO_UPDATE_LASTMOD,
 	NILFS_SUINFO_UPDATE_NBLOCKS,
 	NILFS_SUINFO_UPDATE_FLAGS,
-	NILFS_SUINFO_UPDATE_LASTDEC,
+	NILFS_SUINFO_UPDATE_NBLKS_LASTMOD,
 	__NR_NILFS_SUINFO_UPDATE_FIELDS,
 };
 
@@ -765,7 +765,7 @@ nilfs_suinfo_update_##name(const struct nilfs_suinfo_update *sup)	\
 NILFS_SUINFO_UPDATE_FNS(LASTMOD, lastmod)
 NILFS_SUINFO_UPDATE_FNS(NBLOCKS, nblocks)
 NILFS_SUINFO_UPDATE_FNS(FLAGS, flags)
-NILFS_SUINFO_UPDATE_FNS(LASTDEC, lastdec)
+NILFS_SUINFO_UPDATE_FNS(NBLKS_LASTMOD, nblks_lastmod)
 
 enum {
 	NILFS_CHECKPOINT,
@@ -873,21 +873,27 @@ struct nilfs_vdesc {
 	__u64 vd_blocknr;
 	__u64 vd_offset;
 	__u32 vd_flags;
-	/* vd_flags2 needed because of backwards compatibility */
-	__u32 vd_flags2;
+	/*
+	 * vd_blk_flags needed because vd_flags doesn't support
+	 * bit-flags because of backwards compatibility
+	 */
+	__u32 vd_blk_flags;
 };
 
 /* vdesc flags */
 enum {
 	NILFS_VDESC_DATA,
 	NILFS_VDESC_NODE,
+
 	/* ... */
 };
 enum {
 	NILFS_VDESC_SNAPSHOT,
 	NILFS_VDESC_PROTECTION_PERIOD,
-	__NR_NILFS_VDESC_FIELDS,
+
 	/* ... */
+
+	__NR_NILFS_VDESC_FIELDS,
 };
 
 #define NILFS_VDESC_FNS(flag, name)					\
@@ -906,17 +912,17 @@ nilfs_vdesc_##name(const struct nilfs_vdesc *vdesc)			\
 static inline void							\
 nilfs_vdesc_set_##name(struct nilfs_vdesc *vdesc)			\
 {									\
-	vdesc->vd_flags2 |= (1UL << NILFS_VDESC_##flag);		\
+	vdesc->vd_blk_flags |= (1UL << NILFS_VDESC_##flag);		\
 }									\
 static inline void							\
 nilfs_vdesc_clear_##name(struct nilfs_vdesc *vdesc)			\
 {									\
-	vdesc->vd_flags2 &= ~(1UL << NILFS_VDESC_##flag);		\
+	vdesc->vd_blk_flags &= ~(1UL << NILFS_VDESC_##flag);		\
 }									\
 static inline int							\
 nilfs_vdesc_##name(const struct nilfs_vdesc *vdesc)			\
 {									\
-	return !!(vdesc->vd_flags2 & (1UL << NILFS_VDESC_##flag));	\
+	return !!(vdesc->vd_blk_flags & (1UL << NILFS_VDESC_##flag));	\
 }
 
 NILFS_VDESC_FNS(DATA, data)
@@ -970,7 +976,7 @@ struct nilfs_bdesc {
 	_IOW(NILFS_IOCTL_IDENT, 0x8C, __u64[2])
 #define NILFS_IOCTL_SET_SUINFO  \
 	_IOW(NILFS_IOCTL_IDENT, 0x8D, struct nilfs_argv)
-#define NILFS_IOCTL_CLEAN_SNAPSHOT_FLAGS  \
+#define NILFS_IOCTL_SET_INC_FLAGS  \
 	_IOW(NILFS_IOCTL_IDENT, 0x8F, struct nilfs_argv)
 
 #endif	/* _LINUX_NILFS_FS_H */
