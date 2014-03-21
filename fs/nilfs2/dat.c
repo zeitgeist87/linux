@@ -34,6 +34,85 @@
 #define NILFS_CNO_MIN	((__u64)1)
 #define NILFS_CNO_MAX	(~(__u64)0)
 
+/*
+ * special snapshot value used as a flag to indicate
+ * that the segment usage information to which this
+ * entry belongs was incremented
+ */
+#define NILFS_ENTRY_INC		((__u64)0)
+/*
+ * special snapshot value used as a flag to indicate
+ * that the segment usage information to which this
+ * entry belongs was decremented
+ */
+#define NILFS_ENTRY_DEC		(NILFS_CNO_MAX)
+
+/**
+ * nilfs_dat_entry_belongs_to_cp - check if @entry belongs to @cno
+ * @entry: DAT-Entry
+ * @cno: checkpoint number
+ *
+ * Description: Returns 1 if @entry belongs to @cno. An entry belongs to a
+ * checkpoint if the value of the checkpoint number falls into the range of
+ * de_start inclusive to de_end exclusive.
+ */
+static inline int nilfs_dat_entry_belongs_to_cp(struct nilfs_dat_entry *entry,
+						__u64 cno)
+{
+	return cno >= le64_to_cpu(entry->de_start) &&
+			cno < le64_to_cpu(entry->de_end);
+}
+
+/**
+ * nilfs_dat_entry_is_alive - check if @entry is alive
+ * @entry: DAT-Entry
+ *
+ * Description: Simple check if @entry is alive in the current checkpoint.
+ */
+static inline int nilfs_dat_entry_is_live(struct nilfs_dat_entry *entry)
+{
+	return entry->de_end == cpu_to_le64(NILFS_CNO_MAX);
+}
+
+/**
+ * nilfs_dat_entry_is_inc - check if @entry has been incremented
+ * @entry: DAT-Entry
+ *
+ * Description: Simple check if the segment usage information of the
+ * segment to which de_block belongs has been incremented by one. The special
+ * snapshot value NILFS_ENTRY_INC is used as a flag.
+ */
+static inline int nilfs_dat_entry_is_inc(struct nilfs_dat_entry *entry)
+{
+	return entry->de_ss == cpu_to_le64(NILFS_ENTRY_INC);
+}
+
+/**
+ * nilfs_dat_entry_is_dec - check if @entry has an unknown snapshot
+ * @entry: DAT-Entry
+ *
+ * Description: Simple check if the segment usage information of the
+ * segment to which de_block belongs has been decremented by one. The special
+ * snapshot value NILFS_ENTRY_DEC is used as a flag.
+ */
+static inline int nilfs_dat_entry_is_dec(struct nilfs_dat_entry *entry)
+{
+	return entry->de_ss == cpu_to_le64(NILFS_ENTRY_DEC);
+}
+
+/**
+ * nilfs_dat_entry_has_ss - check if @entry has some concrete snapshot
+ * @entry: DAT-Entry
+ *
+ * Description: Returns true if the value in de_ss is a real snapshot value
+ * and none of the special flags NILFS_ENTRY_INC and NILFS_ENTRY_DEC.
+ */
+static inline int nilfs_dat_entry_has_ss(struct nilfs_dat_entry *entry)
+{
+	return !nilfs_dat_entry_is_inc(entry) &&
+	       !nilfs_dat_entry_is_dec(entry);
+}
+
 /**
  * struct nilfs_dat_info - on-memory private data of DAT file
  * @mi: on-memory private data of metadata file
@@ -98,7 +177,7 @@ void nilfs_dat_commit_alloc(struct inode *dat, struct nilfs_palloc_req *req)
 	entry->de_start = cpu_to_le64(NILFS_CNO_MIN);
 	entry->de_end = cpu_to_le64(NILFS_CNO_MAX);
 	entry->de_blocknr = cpu_to_le64(0);
-	entry->de_ss = cpu_to_le64(0);
+	entry->de_ss = cpu_to_le64(NILFS_ENTRY_INC);
 	kunmap_atomic(kaddr);
 
 	nilfs_palloc_commit_alloc_entry(dat, req);
@@ -123,7 +202,7 @@ static void nilfs_dat_commit_free(struct inode *dat,
 	entry->de_start = cpu_to_le64(NILFS_CNO_MIN);
 	entry->de_end = cpu_to_le64(NILFS_CNO_MIN);
 	entry->de_blocknr = cpu_to_le64(0);
-	entry->de_ss = cpu_to_le64(0);
+	entry->de_ss = cpu_to_le64(NILFS_ENTRY_INC);
 	kunmap_atomic(kaddr);
 
 	nilfs_dat_commit_entry(dat, req);
@@ -191,7 +270,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 			  int dead, int count_blocks)
 {
 	struct nilfs_dat_entry *entry;
-	__u64 start, end;
+	__u64 start, end, segnum;
 	sector_t blocknr;
 	void *kaddr;
 	struct the_nilfs *nilfs;
@@ -205,7 +284,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 		WARN_ON(start > end);
 	}
 	entry->de_end = cpu_to_le64(end);
-	entry->de_ss = cpu_to_le64(NILFS_CNO_MAX);
+	entry->de_ss = cpu_to_le64(NILFS_ENTRY_DEC);
 	blocknr = le64_to_cpu(entry->de_blocknr);
 	kunmap_atomic(kaddr);
 
@@ -216,9 +295,11 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 
 		if (!dead && count_blocks) {
 			nilfs =  dat->i_sb->s_fs_info;
+			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
+
 			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
-				nilfs_get_segnum_of_block(nilfs, blocknr), -1,
-				nilfs->ns_ctime);
+						       segnum, -1,
+						       nilfs->ns_ctime);
 		}
 	}
 }
@@ -339,7 +420,8 @@ int nilfs_dat_freev(struct inode *dat, __u64 *vblocknrs, size_t nitems)
  *
  * %-ENOMEM - Insufficient amount of memory available.
  */
-int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr)
+int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr,
+		   int is_snapshot)
 {
 	struct buffer_head *entry_bh;
 	struct nilfs_dat_entry *entry;
@@ -379,8 +461,8 @@ int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr)
 	}
 	WARN_ON(blocknr == 0);
 	entry->de_blocknr = cpu_to_le64(blocknr);
-	if (entry->de_ss == cpu_to_le64(NILFS_CNO_MAX))
-		entry->de_ss = cpu_to_le64(0);
+	if (is_snapshot && nilfs_dat_entry_is_dec(entry))
+		entry->de_ss = cpu_to_le64(NILFS_ENTRY_INC);
 	kunmap_atomic(kaddr);
 
 	mark_buffer_dirty(entry_bh);
@@ -392,17 +474,14 @@ int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr)
 }
 
 /**
- * nilfs_dat_clean_snapshot_flag - check flags used by snapshots
+ * nilfs_dat_set_inc - set flag to indicate that @vblocknr was incremented
  * @dat: DAT file inode
  * @vblocknr: virtual block number
  *
- * Description: nilfs_dat_clean_snapshot_flag() changes the flags from
- * NILFS_CNO_MAX to 0 if necessary, so that segment usage is accurately
- * counted. NILFS_CNO_MAX indicates, that the corresponding block belongs
- * to some snapshot, but was already decremented. If the segment usage info
- * is changed with NILFS_IOCTL_SET_SUINFO and the number of blocks is updated,
- * then these blocks would never be decremented and there are scenarios where
- * the corresponding segments would starve (never be cleaned).
+ * Description: nilfs_dat_set_inc() sets the flag NILFS_ENTRY_INC, if
+ * necessary, to indicate that the segment usage information of the segment
+ * to which the DAT-Entry of @vblocknr belongs was incremented. This flag is
+ * important to assure accurate counting of live blocks.
  *
  * Return Value: On success, 0 is returned. On error, one of the following
  * negative error codes is returned.
@@ -411,7 +490,7 @@ int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr)
  *
  * %-ENOMEM - Insufficient amount of memory available.
  */
-int nilfs_dat_clean_snapshot_flag(struct inode *dat, __u64 vblocknr)
+int nilfs_dat_set_inc(struct inode *dat, __u64 vblocknr)
 {
 	struct buffer_head *entry_bh;
 	struct nilfs_dat_entry *entry;
@@ -433,24 +512,22 @@ int nilfs_dat_clean_snapshot_flag(struct inode *dat, __u64 vblocknr)
 	if (!buffer_nilfs_redirected(entry_bh)) {
 		ret = nilfs_mdt_freeze_buffer(dat, entry_bh);
 		if (ret) {
-			brelse(entry_bh);
+			put_bh(entry_bh);
 			return ret;
 		}
 	}
 
 	kaddr = kmap_atomic(entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
-	if (entry->de_ss == cpu_to_le64(NILFS_CNO_MAX)) {
-		entry->de_ss = cpu_to_le64(0);
+	if (nilfs_dat_entry_is_dec(entry)) {
+		entry->de_ss = cpu_to_le64(NILFS_ENTRY_INC);
 		kunmap_atomic(kaddr);
 		mark_buffer_dirty(entry_bh);
 		nilfs_mdt_mark_dirty(dat);
-	} else {
+	} else
 		kunmap_atomic(kaddr);
-	}
 
-	brelse(entry_bh);
-
+	put_bh(entry_bh);
 	return 0;
 }
 
@@ -458,13 +535,14 @@ int nilfs_dat_clean_snapshot_flag(struct inode *dat, __u64 vblocknr)
  * nilfs_dat_is_live - checks if the virtual block number is alive
  * @dat: DAT file inode
  * @vblocknr: virtual block number
+ * @errp: pointer to return code if error occurred
  *
- * Description: nilfs_dat_is_live() looks up the DAT entry for @vblocknr and
- * determines if the corresponding block is alive or not. This check ignores
- * snapshots and protection periods.
+ * Description: nilfs_dat_is_live() looks up the DAT-Entry for
+ * @vblocknr and determines if the corresponding block is alive in the current
+ * checkpoint or not. This check ignores snapshots and protection periods.
  *
- * Return Value: 1 if vblocknr is alive and 0 otherwise. On error, one
- * of the following negative error codes is returned.
+ * Return Value: 1 if vblocknr is alive and 0 otherwise. On error, 0 is
+ * returned and @errp is set to one of the following negative error codes.
  *
  * %-EIO - I/O error.
  *
@@ -472,23 +550,23 @@ int nilfs_dat_clean_snapshot_flag(struct inode *dat, __u64 vblocknr)
  *
  * %-ENOENT - A block number associated with @vblocknr does not exist.
  */
-int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr)
+int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr, int *errp)
 {
 	struct buffer_head *entry_bh, *bh;
 	struct nilfs_dat_entry *entry;
 	sector_t blocknr;
 	void *kaddr;
-	int ret;
+	int ret = 0, err;
 
-	ret = nilfs_palloc_get_entry_block(dat, vblocknr, 0, &entry_bh);
-	if (ret < 0)
-		return ret;
+	err = nilfs_palloc_get_entry_block(dat, vblocknr, 0, &entry_bh);
+	if (err < 0)
+		goto out;
 
 	if (!nilfs_doing_gc() && buffer_nilfs_redirected(entry_bh)) {
 		bh = nilfs_mdt_get_frozen_buffer(dat, entry_bh);
 		if (bh) {
 			WARN_ON(!buffer_uptodate(bh));
-			brelse(entry_bh);
+			put_bh(entry_bh);
 			entry_bh = bh;
 		}
 	}
@@ -497,18 +575,18 @@ int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr)
 	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
 	blocknr = le64_to_cpu(entry->de_blocknr);
 	if (blocknr == 0) {
-		ret = -ENOENT;
-		goto out;
+		err = -ENOENT;
+		goto out_unmap;
 	}
 
+	ret = nilfs_dat_entry_is_live(entry);
 
-	if (entry->de_end == cpu_to_le64(NILFS_CNO_MAX))
-		ret = 1;
-	else
-		ret = 0;
-out:
+out_unmap:
 	kunmap_atomic(kaddr);
-	brelse(entry_bh);
+	put_bh(entry_bh);
+out:
+	if (errp)
+		*errp = err;
 	return ret;
 }
 
@@ -567,46 +645,81 @@ int nilfs_dat_translate(struct inode *dat, __u64 vblocknr, sector_t *blocknrp)
 	return ret;
 }
 
+/**
+ * nilfs_dat_replace_snapshot - replaces snapshot with prev or next snapshot
+ * @entry: DAT-Entry
+ * @prev: previous snapshot of the current snapshot
+ * @next: next snapshot of the current snapshot
+ *
+ * Description: nilfs_dat_replace_snapshot() replaces the current snapshot,
+ * which is about to be deleted, with either the previous or the next
+ * snapshot. Since all snapshots are stored in a SORTED linked list and the
+ * previous and next snapshots are known, it is possible to reliably determine
+ * that the block doesn't belong to any other snapshot if it belongs to neither
+ * one of them.
+ */
+static void nilfs_dat_replace_snapshot(struct nilfs_dat_entry *entry,
+				     __u64 prev,
+				     __u64 next)
+{
+	if (nilfs_dat_entry_belongs_to_cp(entry, prev))
+		entry->de_ss = cpu_to_le64(prev);
+	else if (nilfs_dat_entry_belongs_to_cp(entry, next))
+		entry->de_ss = cpu_to_le64(next);
+	else
+		entry->de_ss = cpu_to_le64(NILFS_ENTRY_DEC);
+}
+
 void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
 			   void *data)
 {
+	struct the_nilfs *nilfs;
 	struct nilfs_dat_entry *entry;
-	__u64 start, end, prev_ss;
+	void *kaddr;
+	__u64 prev_ss, segnum;
 	__u64 *ssp = data, ss = ssp[0], prev = ssp[1], next = ssp[2];
 	sector_t blocknr;
-	void *kaddr;
-	struct the_nilfs *nilfs;
+	int nblocks;
 
 	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
 					     req->pr_entry_bh, kaddr);
-	start = le64_to_cpu(entry->de_start);
-	end = le64_to_cpu(entry->de_end);
 	blocknr = le64_to_cpu(entry->de_blocknr);
 	prev_ss = le64_to_cpu(entry->de_ss);
 
-	if (blocknr != 0 && end != NILFS_CNO_MAX && ss >= start && ss < end) {
-		if (prev_ss == ss || prev_ss == NILFS_CNO_MAX) {
-			if (prev && prev >= start && prev < end)
-				entry->de_ss = cpu_to_le64(prev);
-			else if (next && next >= start && next < end)
-				entry->de_ss = cpu_to_le64(next);
-			else
-				entry->de_ss = cpu_to_le64(0);
+	if (blocknr != 0 &&
+	    !nilfs_dat_entry_is_live(entry) &&
+	    (!nilfs_dat_entry_has_ss(entry) || prev_ss == ss) &&
+	    nilfs_dat_entry_belongs_to_cp(entry, ss)) {
 
-			if (prev_ss != NILFS_CNO_MAX)
-				prev_ss = le64_to_cpu(entry->de_ss);
-			kunmap_atomic(kaddr);
+		nilfs_dat_replace_snapshot(entry, prev, next);
+		ss = le64_to_cpu(entry->de_ss);
+
+		kunmap_atomic(kaddr);
+
+		/* only mark dirty if the value actually changed */
+		if (prev_ss != ss) {
 			mark_buffer_dirty(req->pr_entry_bh);
 			nilfs_mdt_mark_dirty(dat);
-		} else
-			kunmap_atomic(kaddr);
 
-		if (prev_ss == 0) {
+			/*
+			 * Decrement segusg if NILFS_ENTRY_DEC was
+			 * set by nilfs_dat_replace_snapshot(), but wasn't set
+			 * before. Increment segusg if NILFS_ENTRY_DEC was
+			 * set before, but was replaced by prev or next.
+			 */
+			if (ss == NILFS_ENTRY_DEC)
+				nblocks = -1;
+			else if (prev_ss == NILFS_ENTRY_DEC)
+				nblocks = 1;
+			else
+				return;
+
 			nilfs = dat->i_sb->s_fs_info;
-			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
-				nilfs_get_segnum_of_block(nilfs, blocknr),
-				-1, 0);
+			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
+
+			nilfs_sufile_add_segment_usage(nilfs->ns_sufile, segnum,
+						       (s64)nblocks, 0);
 		}
 	} else
 		kunmap_atomic(kaddr);
@@ -615,23 +728,23 @@ void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
 void nilfs_dat_do_scan_inc(struct inode *dat, struct nilfs_palloc_req *req,
 			   void *data)
 {
-	struct nilfs_dat_entry *entry;
-	__u64 start, end, prev_ss;
-	__u64 *ssp = data, ss = *ssp;
-	sector_t blocknr;
-	void *kaddr;
 	struct the_nilfs *nilfs;
+	struct nilfs_dat_entry *entry;
+	void *kaddr;
+	__u64 prev_ss, ss = *((__u64 *)data);
+	__u64 segnum;
+	sector_t blocknr;
 
 	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
-			req->pr_entry_bh, kaddr);
-	start = le64_to_cpu(entry->de_start);
-	end = le64_to_cpu(entry->de_end);
+					     req->pr_entry_bh, kaddr);
 	blocknr = le64_to_cpu(entry->de_blocknr);
 	prev_ss = le64_to_cpu(entry->de_ss);
 
-	if (blocknr != 0 && end != NILFS_CNO_MAX && ss >= start && ss < end &&
-			(prev_ss == 0 || prev_ss == NILFS_CNO_MAX)) {
+	if (blocknr != 0 &&
+	    !nilfs_dat_entry_is_live(entry) &&
+	    !nilfs_dat_entry_has_ss(entry) &&
+	    nilfs_dat_entry_belongs_to_cp(entry, ss)) {
 
 		entry->de_ss = cpu_to_le64(ss);
 
@@ -639,10 +752,17 @@ void nilfs_dat_do_scan_inc(struct inode *dat, struct nilfs_palloc_req *req,
 		mark_buffer_dirty(req->pr_entry_bh);
 		nilfs_mdt_mark_dirty(dat);
 
-		nilfs = dat->i_sb->s_fs_info;
-		nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
-				nilfs_get_segnum_of_block(nilfs, blocknr),
-				1, 0);
+		/*
+		 * increment segment usage only if NILFS_ENTRY_DEC
+		 * was set before the snapshot was created
+		 */
+		if (prev_ss == NILFS_ENTRY_DEC) {
+			nilfs = dat->i_sb->s_fs_info;
+			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
+
+			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+						       segnum, 1, 0);
+		}
 	} else
 		kunmap_atomic(kaddr);
 }

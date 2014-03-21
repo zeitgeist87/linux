@@ -58,8 +58,8 @@ struct nilfs_segment_buffer *nilfs_segbuf_new(struct super_block *sb)
 	INIT_LIST_HEAD(&segbuf->sb_segsum_buffers);
 	INIT_LIST_HEAD(&segbuf->sb_payload_buffers);
 	segbuf->sb_super_root = NULL;
-	segbuf->sb_su_blocks = 0;
-	segbuf->sb_su_blocks_cancel = 0;
+	segbuf->sb_su_nblocks = 0;
+	segbuf->sb_su_nblocks_cancel = 0;
 
 	init_completion(&segbuf->sb_bio_event);
 	atomic_set(&segbuf->sb_err, 0);
@@ -93,14 +93,16 @@ int nilfs_segbuf_set_sui(struct nilfs_segment_buffer *segbuf,
 
 	err = nilfs_sufile_get_suinfo(nilfs->ns_sufile, segbuf->sb_segnum, &si,
 				      sizeof(si), 1);
-	if (err != 1)
-		return -1;
+	if (err < 0)
+		return err;
+	else if (err != 1)
+		return -ENOENT;
 
 	if (si.sui_nblocks == 0)
 		si.sui_nblocks = segbuf->sb_pseg_start - segbuf->sb_fseg_start;
 
-	segbuf->sb_su_blocks = si.sui_nblocks;
-	segbuf->sb_su_blocks_cancel = si.sui_nblocks;
+	segbuf->sb_su_nblocks = si.sui_nblocks;
+	segbuf->sb_su_nblocks_cancel = si.sui_nblocks;
 	return 0;
 }
 
