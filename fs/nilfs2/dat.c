@@ -673,7 +673,7 @@ static __u64 nilfs_dat_replace_snapshot(struct nilfs_dat_entry *entry,
 		return NILFS_ENTRY_DEC;
 	}
 
-	return le64_to_cpu(entry->de_ss);
+	return NILFS_ENTRY_DEC;
 }
 
 void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
