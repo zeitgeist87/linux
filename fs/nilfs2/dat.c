@@ -658,16 +658,22 @@ int nilfs_dat_translate(struct inode *dat, __u64 vblocknr, sector_t *blocknrp)
  * that the block doesn't belong to any other snapshot if it belongs to neither
  * one of them.
  */
-static void nilfs_dat_replace_snapshot(struct nilfs_dat_entry *entry,
-				     __u64 prev,
-				     __u64 next)
+static __u64 nilfs_dat_replace_snapshot(struct nilfs_dat_entry *entry,
+				       __u64 prev,
+				       __u64 next)
 {
-	if (nilfs_dat_entry_belongs_to_cp(entry, prev))
+	if (nilfs_dat_entry_belongs_to_cp(entry, prev)) {
 		entry->de_ss = cpu_to_le64(prev);
-	else if (nilfs_dat_entry_belongs_to_cp(entry, next))
+		return prev;
+	} else if (nilfs_dat_entry_belongs_to_cp(entry, next)) {
 		entry->de_ss = cpu_to_le64(next);
-	else
+		return next;
+	} else if (!nilfs_dat_entry_is_dec(entry)) {
 		entry->de_ss = cpu_to_le64(NILFS_ENTRY_DEC);
+		return NILFS_ENTRY_DEC;
+	}
+
+	return le64_to_cpu(entry->de_ss);
 }
 
 void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
@@ -692,9 +698,7 @@ void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
 	    (!nilfs_dat_entry_has_ss(entry) || prev_ss == ss) &&
 	    nilfs_dat_entry_belongs_to_cp(entry, ss)) {
 
-		nilfs_dat_replace_snapshot(entry, prev, next);
-		ss = le64_to_cpu(entry->de_ss);
-
+		ss = nilfs_dat_replace_snapshot(entry, prev, next);
 		kunmap_atomic(kaddr);
 
 		/* only mark dirty if the value actually changed */
