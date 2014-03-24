@@ -501,22 +501,6 @@ int nilfs_dat_set_inc(struct inode *dat, __u64 vblocknr)
 	if (ret < 0)
 		return ret;
 
-	/*
-	 * The given disk block number (blocknr) is not yet written to
-	 * the device at this point.
-	 *
-	 * To prevent nilfs_dat_translate() from returning the
-	 * uncommitted block number, this makes a copy of the entry
-	 * buffer and redirects nilfs_dat_translate() to the copy.
-	 */
-	if (!buffer_nilfs_redirected(entry_bh)) {
-		ret = nilfs_mdt_freeze_buffer(dat, entry_bh);
-		if (ret) {
-			put_bh(entry_bh);
-			return ret;
-		}
-	}
-
 	kaddr = kmap_atomic(entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
 	if (nilfs_dat_entry_is_dec(entry)) {
@@ -668,10 +652,8 @@ static __u64 nilfs_dat_replace_snapshot(struct nilfs_dat_entry *entry,
 	} else if (nilfs_dat_entry_belongs_to_cp(entry, next)) {
 		entry->de_ss = cpu_to_le64(next);
 		return next;
-	} else if (!nilfs_dat_entry_is_dec(entry)) {
+	} else if (!nilfs_dat_entry_is_dec(entry))
 		entry->de_ss = cpu_to_le64(NILFS_ENTRY_DEC);
-		return NILFS_ENTRY_DEC;
-	}
 
 	return NILFS_ENTRY_DEC;
 }

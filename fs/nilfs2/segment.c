@@ -1601,7 +1601,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	if (!nfinfo)
 		goto out;
 
-	memset(&mss, 0, sizeof(mss));
+	memset(&mss, 0, sizeof(struct nilfs_mod_segusg_state));
 
 	blocknr = segbuf->sb_pseg_start + segbuf->sb_sum.nsumblk;
 	ssp.bh = NILFS_SEGBUF_FIRST_BH(&segbuf->sb_segsum_buffers);
