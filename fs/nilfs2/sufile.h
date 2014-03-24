@@ -29,13 +29,12 @@
 #include "mdt.h"
 
 static inline int
-nilfs_sufile_nblock_lastmod_supported(const struct inode *sufile)
+nilfs_sufile_nblks_lastmod_supported(const struct inode *sufile)
 {
-	struct nilfs_segment_usage *sup;
+	size_t su_lm_off = offsetof(struct nilfs_segment_usage,
+				    su_nblks_lastmod);
 
-	return NILFS_MDT(sufile)->mi_entry_size >=
-		sizeof(sup->su_lastmod) + sizeof(sup->su_nblocks) +
-		sizeof(sup->su_flags) + sizeof(sup->su_nblks_lastmod);
+	return NILFS_MDT(sufile)->mi_entry_size > su_lm_off;
 }
 
 static inline void
@@ -45,7 +44,7 @@ nilfs_sufile_segment_usage_set_clean(const struct inode *sufile,
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(0);
-	if (nilfs_sufile_nblock_lastmod_supported(sufile))
+	if (nilfs_sufile_nblks_lastmod_supported(sufile))
 		su->su_nblks_lastmod = cpu_to_le64(0);
 }
 

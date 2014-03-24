@@ -453,7 +453,7 @@ void nilfs_sufile_do_scrap(struct inode *sufile, __u64 segnum,
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(1UL << NILFS_SEGMENT_USAGE_DIRTY);
-	if (nilfs_sufile_nblock_lastmod_supported(sufile))
+	if (nilfs_sufile_nblks_lastmod_supported(sufile))
 		su->su_nblks_lastmod = cpu_to_le64(0);
 	kunmap_atomic(kaddr);
 
@@ -605,7 +605,7 @@ int nilfs_sufile_add_segment_usage(struct inode *sufile, __u64 segnum,
 	}
 
 	su->su_nblocks = cpu_to_le32(value);
-	if (modtime && nilfs_sufile_nblock_lastmod_supported(sufile))
+	if (modtime && nilfs_sufile_nblks_lastmod_supported(sufile))
 		su->su_nblks_lastmod = cpu_to_le64(modtime);
 	kunmap_atomic(kaddr);
 
@@ -1020,8 +1020,8 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 		if (nilfs_suinfo_update_lastmod(sup))
 			su->su_lastmod = cpu_to_le64(sup->sup_sui.sui_lastmod);
 
-		if (nilfs_suinfo_update_nblocks_lastmod(sup) &&
-		    nilfs_sufile_nblock_lastmod_supported(sufile))
+		if (nilfs_suinfo_update_nblks_lastmod(sup) &&
+		    nilfs_sufile_nblks_lastmod_supported(sufile))
 			su->su_nblks_lastmod =
 				cpu_to_le64(sup->sup_sui.sui_nblks_lastmod);
 
