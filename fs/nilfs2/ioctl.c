@@ -610,8 +610,10 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 		       (unsigned long long)vdesc->vd_blocknr,
 		       (unsigned long long)vdesc->vd_vblocknr);
 
-		list_for_each_entry(bh, &bh->b_assoc_buffers, b_assoc_buffers) {
-			printk(KERN_CRIT "ERREPORT: %llu %llu %llu\n", (unsigned long long)bh, (unsigned long long)bh->b_blocknr, (unsigned long long)bh->b_count.counter);
+		struct buffer_head *bh2;
+		struct list_head *head = &bh->b_assoc_buffers;
+		list_for_each_entry(bh2, head, b_assoc_buffers) {
+			printk(KERN_CRIT "ERREPORT: %llu %llu %llu\n", (unsigned long long)bh2, (unsigned long long)bh2->b_blocknr, (unsigned long long)bh2->b_count.counter);
 		}
 		brelse(bh);
 		return -EEXIST;
