@@ -601,7 +601,7 @@ static int nilfs_palloc_scan_group(struct inode *inode,
 
 		if (blkoff != prev_blkoff) {
 			if (prev_blkoff)
-				put_bh(req->pr_entry_bh);
+				brelse(req->pr_entry_bh);
 
 			ret = nilfs_palloc_get_entry_block(inode,
 							   req->pr_entry_nr,
@@ -615,11 +615,11 @@ static int nilfs_palloc_scan_group(struct inode *inode,
 	}
 
 	if (blkoff)
-		put_bh(req->pr_entry_bh);
+		brelse(req->pr_entry_bh);
 
 out_entry:
 	kunmap(bitmap_bh->b_page);
-	put_bh(bitmap_bh);
+	brelse(bitmap_bh);
 	return ret;
 }
 
@@ -687,14 +687,14 @@ int nilfs_palloc_scan_entries(struct inode *inode,
 		}
 
 		kunmap(desc_bh->b_page);
-		put_bh(desc_bh);
+		brelse(desc_bh);
 	}
 
 	return 0;
 
 out_desc:
 	kunmap(desc_bh->b_page);
-	put_bh(desc_bh);
+	brelse(desc_bh);
 	return ret;
 }
 

@@ -511,7 +511,7 @@ int nilfs_dat_set_inc(struct inode *dat, __u64 vblocknr)
 	} else
 		kunmap_atomic(kaddr);
 
-	put_bh(entry_bh);
+	brelse(entry_bh);
 	return 0;
 }
 
@@ -550,7 +550,7 @@ int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr, int *errp)
 		bh = nilfs_mdt_get_frozen_buffer(dat, entry_bh);
 		if (bh) {
 			WARN_ON(!buffer_uptodate(bh));
-			put_bh(entry_bh);
+			brelse(entry_bh);
 			entry_bh = bh;
 		}
 	}
@@ -567,7 +567,7 @@ int nilfs_dat_is_live(struct inode *dat, __u64 vblocknr, int *errp)
 
 out_unmap:
 	kunmap_atomic(kaddr);
-	put_bh(entry_bh);
+	brelse(entry_bh);
 out:
 	if (errp)
 		*errp = err;
