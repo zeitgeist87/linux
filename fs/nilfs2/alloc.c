@@ -545,6 +545,160 @@ int nilfs_palloc_prepare_alloc_entry(struct inode *inode,
 }
 
 /**
+ * nilfs_palloc_scan_group - scan every entry in group and execute @dofunc
+ * @inode: inode of metadata file using this allocator
+ * @dofunc: function executed for every entry
+ * @data: data pointer passed to dofunc
+ * @req: nilfs_palloc_req structure handed to @dofunc
+ * @group: allocation group number
+ * @nentries: number of entries in @group
+ *
+ * Description: nilfs_palloc_scan_group() walks through every allocated entry
+ * of one group in a metadata file and executes dofunc on it. It passes a data
+ * pointer to dofunc, which can be used as an input parameter or for returning
+ * of results. This is a helper function for nilfs_palloc_scan_entries().
+ *
+ * Return Value: On success, 0 is returned. On error, a
+ * negative error code is returned.
+ */
+static int nilfs_palloc_scan_group(struct inode *inode,
+				   void (*dofunc)(struct inode *,
+						  struct nilfs_palloc_req *,
+						  void *),
+				   void *data,
+				   struct nilfs_palloc_req *req,
+				   unsigned long group,
+				   unsigned long nentries)
+{
+	struct buffer_head *bitmap_bh;
+	unsigned char *bitmap;
+	void *bitmap_kaddr;
+	unsigned long i, entries_per_group, pos = 0;
+	unsigned long blkoff = 0, prev_blkoff;
+	int ret;
+
+	entries_per_group = nilfs_palloc_entries_per_group(inode);
+
+	ret = nilfs_palloc_get_bitmap_block(inode, group, 0, &bitmap_bh);
+	if (ret < 0)
+		return ret;
+
+	req->pr_bitmap_bh = bitmap_bh;
+	bitmap_kaddr = kmap(bitmap_bh->b_page);
+	bitmap = bitmap_kaddr + bh_offset(bitmap_bh);
+
+	for (i = 0; i < nentries; ++i, ++pos) {
+		pos = nilfs_find_next_bit(bitmap, entries_per_group, pos);
+
+		if (pos >= entries_per_group)
+			break;
+
+		/* found an entry */
+		req->pr_entry_nr = entries_per_group * group + pos;
+
+		prev_blkoff = blkoff;
+		blkoff = nilfs_palloc_entry_blkoff(inode, req->pr_entry_nr);
+
+		if (blkoff != prev_blkoff) {
+			if (prev_blkoff)
+				put_bh(req->pr_entry_bh);
+
+			ret = nilfs_palloc_get_entry_block(inode,
+							   req->pr_entry_nr,
+							   0,
+							   &req->pr_entry_bh);
+			if (ret < 0)
+				goto out_entry;
+		}
+
+		dofunc(inode, req, data);
+	}
+
+	if (blkoff)
+		put_bh(req->pr_entry_bh);
+
+out_entry:
+	kunmap(bitmap_bh->b_page);
+	put_bh(bitmap_bh);
+	return ret;
+}
+
+/**
+ * nilfs_palloc_scan_entries - scan every entry in file and execute @dofunc
+ * @inode: inode of metadata file using this allocator
+ * @dofunc: function executed for every entry
+ * @data: data pointer passed to dofunc
+ *
+ * Description: nilfs_palloc_scan_entries() walks through every allocated entry
+ * of a metadata file and executes dofunc on it. It passes a data pointer to
+ * dofunc, which can be used as an input parameter or for returning of results.
+ *
+ * Return Value: On success, 0 is returned. On error, a
+ * negative error code is returned.
+ */
+int nilfs_palloc_scan_entries(struct inode *inode,
+			      void (*dofunc)(struct inode *,
+					     struct nilfs_palloc_req *,
+					     void *),
+			      void *data)
+{
+	struct buffer_head *desc_bh;
+	struct nilfs_palloc_group_desc *desc;
+	struct nilfs_palloc_req req;
+	void *desc_kaddr;
+	unsigned long group, maxgroup;
+	unsigned long n, m, entries_per_group;
+	unsigned long i;
+	int ret;
+
+	maxgroup = nilfs_palloc_groups_count(inode) - 1;
+	entries_per_group = nilfs_palloc_entries_per_group(inode);
+
+	for (group = 0; group <= maxgroup;) {
+		/*
+		 * ngroups is a very big constant value and does not
+		 * contain the actual number of groups, but rather the maximum
+		 * number of groups. So the only way to tell if it is the last
+		 * group is by -ENOENT error.
+		 */
+		ret = nilfs_palloc_get_desc_block(inode, group, 0, &desc_bh);
+		if (ret == -ENOENT)
+			break;
+		else if (ret < 0)
+			return ret;
+
+		req.pr_desc_bh = desc_bh;
+		desc_kaddr = kmap(desc_bh->b_page);
+		desc = nilfs_palloc_block_get_group_desc(inode, group,
+							 desc_bh, desc_kaddr);
+		n = nilfs_palloc_rest_groups_in_desc_block(inode, group,
+							   maxgroup);
+
+		for (i = 0; i < n; i++, desc++, group++) {
+			m = entries_per_group;
+			m -= nilfs_palloc_group_desc_nfrees(inode, group, desc);
+			if (!m)
+				continue;
+
+			ret = nilfs_palloc_scan_group(inode, dofunc, data,
+						      &req, group, m);
+			if (ret < 0)
+				goto out_desc;
+		}
+
+		kunmap(desc_bh->b_page);
+		put_bh(desc_bh);
+	}
+
+	return 0;
+
+out_desc:
+	kunmap(desc_bh->b_page);
+	put_bh(desc_bh);
+	return ret;
+}
+
+/**
  * nilfs_palloc_commit_alloc_entry - finish allocation of a persistent object
  * @inode: inode of metadata file using this allocator
  * @req: nilfs_palloc_req structure exchanged for the allocation
