@@ -683,8 +683,7 @@ static int nilfs_cpfile_set_snapshot(struct inode *cpfile, __u64 cno)
 	mark_buffer_dirty(header_bh);
 	nilfs_mdt_mark_dirty(cpfile);
 
-	if (nilfs->ns_feature_compat_ro &
-	    NILFS_FEATURE_COMPAT_RO_TRACK_LIVE_BLKS)
+	if (nilfs->ns_feature_compat & NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS)
 		nilfs_dat_scan_inc_ss(nilfs->ns_dat, cno);
 
 	brelse(prev_bh);
@@ -791,8 +790,7 @@ static int nilfs_cpfile_clear_snapshot(struct inode *cpfile, __u64 cno)
 	mark_buffer_dirty(header_bh);
 	nilfs_mdt_mark_dirty(cpfile);
 
-	if (nilfs->ns_feature_compat_ro &
-	    NILFS_FEATURE_COMPAT_RO_TRACK_LIVE_BLKS)
+	if (nilfs->ns_feature_compat & NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS)
 		nilfs_dat_scan_dec_ss(nilfs->ns_dat, cno, prev, next);
 
 	brelse(prev_bh);

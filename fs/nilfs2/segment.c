@@ -1257,10 +1257,6 @@ static int nilfs_segctor_begin_construction(struct nilfs_sc_info *sci,
 	}
 	nilfs_segbuf_set_next_segnum(segbuf, nextnum, nilfs);
 
-	err = nilfs_segbuf_set_sui(segbuf, nilfs);
-	if (err)
-		goto failed;
-
 	BUG_ON(!list_empty(&sci->sc_segbufs));
 	list_add_tail(&segbuf->sb_list, &sci->sc_segbufs);
 	sci->sc_segbuf_nblocks = segbuf->sb_rest_blocks;
@@ -1309,10 +1305,6 @@ static int nilfs_segctor_extend_segments(struct nilfs_sc_info *sci,
 
 		segbuf->sb_sum.seg_seq = prev->sb_sum.seg_seq + 1;
 		nilfs_segbuf_set_next_segnum(segbuf, nextnextnum, nilfs);
-
-		err = nilfs_segbuf_set_sui(segbuf, nilfs);
-		if (err)
-			goto failed;
 
 		list_add_tail(&segbuf->sb_list, &list);
 		prev = segbuf;
@@ -1376,10 +1368,19 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 	int ret;
 
 	list_for_each_entry(segbuf, &sci->sc_segbufs, sb_list) {
-		live_blocks = segbuf->sb_sum.nfileblk + segbuf->sb_su_nblocks;
+		live_blocks = segbuf->sb_sum.nblocks +
+			(segbuf->sb_pseg_start - segbuf->sb_fseg_start);
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
 						     sci->sc_seg_ctime);
+		WARN_ON(ret); /* always succeed because the segusage is dirty */
+
+		/* should always be positive */
+		segbuf->sb_nlive_blks_added = segbuf->sb_nlive_blks_diff +
+					      segbuf->sb_sum.nfileblk;
+		ret = nilfs_sufile_add_nlive_blocks(sufile, segbuf->sb_segnum,
+						    segbuf->sb_nlive_blks_added,
+						    sci->sc_seg_ctime);
 		WARN_ON(ret); /* always succeed because the segusage is dirty */
 	}
 }
@@ -1392,8 +1393,16 @@ static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
 	segbuf = NILFS_FIRST_SEGBUF(logs);
 
 	ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
-					segbuf->sb_su_nblocks_cancel, 0);
+					     segbuf->sb_pseg_start -
+					     segbuf->sb_fseg_start, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
+
+	ret = nilfs_sufile_add_nlive_blocks(sufile, segbuf->sb_segnum,
+					    segbuf->sb_nlive_blks_added,
+					    0);
+	WARN_ON(ret); /* always succeed */
+
+	segbuf->sb_nlive_blks_added = 0;
 
 	list_for_each_entry_continue(segbuf, logs, sb_list) {
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
@@ -1508,7 +1517,7 @@ static void nilfs_segctor_mod_segusg_gc(struct inode *dat,
 	if (!buffer_nilfs_snapshot(bh) &&
 	   (buffer_nilfs_protection_period(bh) ||
 	   !nilfs_dat_is_live(dat, bh->b_blocknr, NULL)))
-			segbuf->sb_su_nblocks--;
+			segbuf->sb_nlive_blks_diff--;
 }
 
 /**
@@ -1541,7 +1550,7 @@ static void nilfs_segctor_mod_segusg_nongc(struct the_nilfs *nilfs,
 
 	if (segnum != mss->segnum) {
 		if (mss->nblocks)
-			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile,
 						       mss->segnum,
 						       -((__s64)mss->nblocks),
 						       mss->maxmodtime);
@@ -1552,16 +1561,16 @@ static void nilfs_segctor_mod_segusg_nongc(struct the_nilfs *nilfs,
 
 
 	if (segnum == segbuf->sb_segnum)
-		segbuf->sb_su_nblocks--;
+		segbuf->sb_nlive_blks_diff--;
 	else
-		++mss->nblocks;
+		mss->nblocks++;
 
 }
 
 static void nilfs_segctor_mod_segusg_final(struct the_nilfs *nilfs,
 					   struct nilfs_mod_segusg_state *mss) {
 	if (mss->nblocks)
-		nilfs_sufile_add_segment_usage(nilfs->ns_sufile, mss->segnum,
+		nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile, mss->segnum,
 				-((__s64)mss->nblocks), mss->maxmodtime);
 }
 
@@ -1598,8 +1607,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	ino_t ino = 0;
 	int gc_inode = 0, err = 0, track_live_blks;
 
-	track_live_blks = nilfs->ns_feature_compat_ro &
-			NILFS_FEATURE_COMPAT_RO_TRACK_LIVE_BLKS;
+	track_live_blks = nilfs->ns_feature_compat &
+			NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS;
 
 	if (!nfinfo)
 		goto out;

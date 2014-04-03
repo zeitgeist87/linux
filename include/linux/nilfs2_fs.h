@@ -221,13 +221,13 @@ struct nilfs_super_block {
  * doesn't know about, it should refuse to mount the filesystem.
  */
 #define NILFS_FEATURE_COMPAT_SUFILE_EXTENSION		(1ULL << 0)
+#define NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS		(1ULL << 1)
 
 #define NILFS_FEATURE_COMPAT_RO_BLOCK_COUNT		(1ULL << 0)
-#define NILFS_FEATURE_COMPAT_RO_TRACK_LIVE_BLKS		(1ULL << 1)
 
-#define NILFS_FEATURE_COMPAT_SUPP	NILFS_FEATURE_COMPAT_SUFILE_EXTENSION
-#define NILFS_FEATURE_COMPAT_RO_SUPP	(NILFS_FEATURE_COMPAT_RO_BLOCK_COUNT |\
-				NILFS_FEATURE_COMPAT_RO_TRACK_LIVE_BLKS)
+#define NILFS_FEATURE_COMPAT_SUPP	(NILFS_FEATURE_COMPAT_SUFILE_EXTENSION \
+				| NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS)
+#define NILFS_FEATURE_COMPAT_RO_SUPP	NILFS_FEATURE_COMPAT_RO_BLOCK_COUNT
 #define NILFS_FEATURE_INCOMPAT_SUPP	0ULL
 
 /*
@@ -618,13 +618,17 @@ struct nilfs_cpfile_header {
  * @su_lastmod: last modified timestamp
  * @su_nblocks: number of blocks in segment
  * @su_flags: flags
- * @su_nblks_lastmod: last decrement of su_nblocks timestamp
+ * @su_nlive_blks: number of live blocks in the segment
+ * @su_pad: padding bytes
+ * @su_nlive_lastmod: timestamp nlive_blks was last modified
  */
 struct nilfs_segment_usage {
 	__le64 su_lastmod;
 	__le32 su_nblocks;
 	__le32 su_flags;
-	__le64 su_nblks_lastmod;
+	__le32 su_nlive_blks;
+	__le32 su_pad;
+	__le64 su_nlive_lastmod;
 };
 
 #define NILFS_MIN_SEGMENT_USAGE_SIZE	16
@@ -666,13 +670,16 @@ NILFS_SEGMENT_USAGE_FNS(ERROR, error)
 static inline void
 nilfs_segment_usage_set_clean(struct nilfs_segment_usage *su, size_t susz)
 {
-	size_t off = offsetof(struct nilfs_segment_usage, su_nblks_lastmod);
+	size_t off = offsetof(struct nilfs_segment_usage, su_nlive_lastmod);
 
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(0);
-	if (susz > off)
-		su->su_nblks_lastmod = cpu_to_le64(0);
+	if (susz > off) {
+		su->su_nlive_blks = cpu_to_le32(0);
+		su->su_pad = cpu_to_le32(0);
+		su->su_nlive_lastmod = cpu_to_le64(0);
+	}
 }
 
 static inline int
@@ -704,13 +711,17 @@ struct nilfs_sufile_header {
  * @sui_lastmod: timestamp of last modification
  * @sui_nblocks: number of written blocks in segment
  * @sui_flags: segment usage flags
- * @sui_nblks_lastmod: last decrement of sui_nblocks timestamp
+ * @sui_nlive_blks: number of live blocks in the segment
+ * @sui_pad: padding bytes
+ * @sui_nlive_lastmod: timestamp nlive_blks was last modified
  */
 struct nilfs_suinfo {
 	__u64 sui_lastmod;
 	__u32 sui_nblocks;
 	__u32 sui_flags;
-	__u64 sui_nblks_lastmod;
+	__u32 sui_nlive_blks;
+	__u32 sui_pad;
+	__u64 sui_nlive_lastmod;
 };
 
 #define NILFS_SUINFO_FNS(flag, name)					\
@@ -748,7 +759,8 @@ enum {
 	NILFS_SUINFO_UPDATE_LASTMOD,
 	NILFS_SUINFO_UPDATE_NBLOCKS,
 	NILFS_SUINFO_UPDATE_FLAGS,
-	NILFS_SUINFO_UPDATE_NBLKS_LASTMOD,
+	NILFS_SUINFO_UPDATE_NLIVE_BLKS,
+	NILFS_SUINFO_UPDATE_NLIVE_LASTMOD,
 	__NR_NILFS_SUINFO_UPDATE_FIELDS,
 };
 
@@ -772,7 +784,8 @@ nilfs_suinfo_update_##name(const struct nilfs_suinfo_update *sup)	\
 NILFS_SUINFO_UPDATE_FNS(LASTMOD, lastmod)
 NILFS_SUINFO_UPDATE_FNS(NBLOCKS, nblocks)
 NILFS_SUINFO_UPDATE_FNS(FLAGS, flags)
-NILFS_SUINFO_UPDATE_FNS(NBLKS_LASTMOD, nblks_lastmod)
+NILFS_SUINFO_UPDATE_FNS(NLIVE_BLKS, nlive_blks)
+NILFS_SUINFO_UPDATE_FNS(NLIVE_LASTMOD, nlive_lastmod)
 
 enum {
 	NILFS_CHECKPOINT,

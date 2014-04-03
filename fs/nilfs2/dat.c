@@ -293,11 +293,11 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 	else {
 		nilfs_dat_commit_entry(dat, req);
 
-		if (!dead && count_blocks && (nilfs->ns_feature_compat_ro &
-		    NILFS_FEATURE_COMPAT_RO_TRACK_LIVE_BLKS)) {
+		if (!dead && count_blocks && (nilfs->ns_feature_compat &
+		    NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS)) {
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
-			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile,
 						       segnum, -1,
 						       nilfs->ns_ctime);
 		}
@@ -704,7 +704,7 @@ void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
 			nilfs = dat->i_sb->s_fs_info;
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
-			nilfs_sufile_add_segment_usage(nilfs->ns_sufile, segnum,
+			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile, segnum,
 						       (s64)nblocks, 0);
 		}
 	} else
@@ -746,7 +746,7 @@ void nilfs_dat_do_scan_inc(struct inode *dat, struct nilfs_palloc_req *req,
 			nilfs = dat->i_sb->s_fs_info;
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
-			nilfs_sufile_add_segment_usage(nilfs->ns_sufile,
+			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile,
 						       segnum, 1, 0);
 		}
 	} else
