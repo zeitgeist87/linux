@@ -293,8 +293,8 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 	else {
 		nilfs_dat_commit_entry(dat, req);
 
-		if (!dead && count_blocks && (nilfs->ns_feature_compat &
-		    NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS)) {
+		if (!dead && count_blocks &&
+		    nilfs_feature_track_live_blks(nilfs)) {
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
 			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile,

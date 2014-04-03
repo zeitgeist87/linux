@@ -1607,8 +1607,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	ino_t ino = 0;
 	int gc_inode = 0, err = 0, track_live_blks;
 
-	track_live_blks = nilfs->ns_feature_compat &
-			NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS;
+	track_live_blks = nilfs_feature_track_live_blks(nilfs);
 
 	if (!nfinfo)
 		goto out;
