@@ -487,7 +487,7 @@ void nilfs_sufile_do_free(struct inode *sufile, __u64 segnum,
 	WARN_ON(!nilfs_segment_usage_dirty(su));
 
 	sudirty = nilfs_segment_usage_dirty(su);
-	nilfs_sufile_segment_usage_set_clean(sufile, su);
+	nilfs_segment_usage_set_clean(su, NILFS_MDT(sufile)->mi_entry_size);
 	kunmap_atomic(kaddr);
 	mark_buffer_dirty(su_bh);
 
@@ -778,8 +778,7 @@ static int nilfs_sufile_truncate_range(struct inode *sufile,
 		nc = 0;
 		for (su = su2, j = 0; j < n; j++, su = (void *)su + susz) {
 			if (nilfs_segment_usage_error(su)) {
-				nilfs_sufile_segment_usage_set_clean(sufile,
-						su);
+				nilfs_segment_usage_set_clean(su, susz);
 				nc++;
 			}
 		}

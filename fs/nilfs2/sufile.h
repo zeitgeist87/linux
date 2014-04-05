@@ -37,20 +37,6 @@ nilfs_sufile_ext_supported(const struct inode *sufile)
 	return NILFS_MDT(sufile)->mi_entry_size > su_lm_off;
 }
 
-static inline void
-nilfs_sufile_segment_usage_set_clean(const struct inode *sufile,
-		struct nilfs_segment_usage *su)
-{
-	su->su_lastmod = cpu_to_le64(0);
-	su->su_nblocks = cpu_to_le32(0);
-	su->su_flags = cpu_to_le32(0);
-	if (nilfs_sufile_ext_supported(sufile)) {
-		su->su_nlive_blks = cpu_to_le32(0);
-		su->su_pad = cpu_to_le32(0);
-		su->su_nlive_lastmod = cpu_to_le64(0);
-	}
-}
-
 static inline unsigned long nilfs_sufile_get_nsegments(struct inode *sufile)
 {
 	return ((struct the_nilfs *)sufile->i_sb->s_fs_info)->ns_nsegments;
