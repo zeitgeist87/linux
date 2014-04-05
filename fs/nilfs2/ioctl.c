@@ -1419,7 +1419,7 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_cpstat(inode, filp, cmd, argp);
 	case NILFS_IOCTL_GET_SUINFO:
 		return nilfs_ioctl_get_info(inode, filp, cmd, argp,
-					    sizeof(struct nilfs_suinfo),
+					    NILFS_MIN_SEGMENT_USAGE_SIZE,
 					    nilfs_ioctl_do_get_suinfo);
 	case NILFS_IOCTL_SET_SUINFO:
 		return nilfs_ioctl_set_suinfo(inode, filp, cmd, argp);

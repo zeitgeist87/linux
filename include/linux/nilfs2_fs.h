@@ -726,6 +726,8 @@ struct nilfs_suinfo {
 	__u64 sui_nlive_lastmod;
 };
 
+#define NILFS_MIN_SUINFO_SIZE	16
+
 #define NILFS_SUINFO_FNS(flag, name)					\
 static inline int							\
 nilfs_suinfo_##name(const struct nilfs_suinfo *si)			\
