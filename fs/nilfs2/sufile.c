@@ -903,10 +903,6 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 	unsigned long nsegs, segusages_per_block;
 	__u64 lm = 0;
 	__u32 nlb = 0;
-	size_t si_lm_off = offsetof(struct nilfs_suinfo,
-				    sui_nlive_lastmod);
-	size_t su_lm_off = offsetof(struct nilfs_segment_usage,
-				    su_nlive_lastmod);
 	ssize_t n;
 	int ret, i, j;
 
@@ -945,12 +941,12 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 				si->sui_flags |=
 					(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
 
-			if (susz > su_lm_off) {
+			if (susz >= NILFS_EXT_SEGMENT_USAGE_SIZE) {
 				nlb = le32_to_cpu(su->su_nlive_blks);
 				lm = le64_to_cpu(su->su_nlive_lastmod);
 			}
 
-			if (sisz > si_lm_off) {
+			if (sisz >= NILFS_EXT_SUINFO_SIZE) {
 				si->sui_nlive_blks = nlb;
 				si->sui_pad = 0;
 				si->sui_nlive_lastmod = lm;

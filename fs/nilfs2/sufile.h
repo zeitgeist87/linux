@@ -31,10 +31,7 @@
 static inline int
 nilfs_sufile_ext_supported(const struct inode *sufile)
 {
-	size_t su_lm_off = offsetof(struct nilfs_segment_usage,
-				    su_nlive_lastmod);
-
-	return NILFS_MDT(sufile)->mi_entry_size > su_lm_off;
+	return NILFS_MDT(sufile)->mi_entry_size >= NILFS_EXT_SEGMENT_USAGE_SIZE;
 }
 
 static inline unsigned long nilfs_sufile_get_nsegments(struct inode *sufile)

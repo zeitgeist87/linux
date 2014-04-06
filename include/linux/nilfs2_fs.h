@@ -615,6 +615,9 @@ struct nilfs_cpfile_header {
 	  sizeof(struct nilfs_checkpoint) - 1) /			\
 			sizeof(struct nilfs_checkpoint))
 
+#define sub_sizeof(TYPE, MEMBER) (offsetof(TYPE, MEMBER) +		\
+					sizeof(((TYPE *)0)->MEMBER))
+
 /**
  * struct nilfs_segment_usage - segment usage
  * @su_lastmod: last modified timestamp
@@ -633,7 +636,10 @@ struct nilfs_segment_usage {
 	__le64 su_nlive_lastmod;
 };
 
-#define NILFS_MIN_SEGMENT_USAGE_SIZE	16
+#define NILFS_MIN_SEGMENT_USAGE_SIZE	sub_sizeof(struct nilfs_segment_usage, \
+						   su_flags)
+#define NILFS_EXT_SEGMENT_USAGE_SIZE	sub_sizeof(struct nilfs_segment_usage, \
+						   su_nlive_lastmod)
 
 /* segment usage flag */
 enum {
@@ -672,12 +678,10 @@ NILFS_SEGMENT_USAGE_FNS(ERROR, error)
 static inline void
 nilfs_segment_usage_set_clean(struct nilfs_segment_usage *su, size_t susz)
 {
-	size_t off = offsetof(struct nilfs_segment_usage, su_nlive_lastmod);
-
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(0);
-	if (susz > off) {
+	if (susz >= NILFS_EXT_SEGMENT_USAGE_SIZE) {
 		su->su_nlive_blks = cpu_to_le32(0);
 		su->su_pad = cpu_to_le32(0);
 		su->su_nlive_lastmod = cpu_to_le64(0);
@@ -703,10 +707,8 @@ struct nilfs_sufile_header {
 	/* ... */
 };
 
-#define NILFS_SUFILE_FIRST_SEGMENT_USAGE_OFFSET	\
-	((sizeof(struct nilfs_sufile_header) +				\
-	  sizeof(struct nilfs_segment_usage) - 1) /			\
-			 sizeof(struct nilfs_segment_usage))
+#define NILFS_SUFILE_FIRST_SEGMENT_USAGE_OFFSET(susz)	\
+	((sizeof(struct nilfs_sufile_header) + (susz) - 1) / (susz))
 
 /**
  * nilfs_suinfo - segment usage information
@@ -726,7 +728,10 @@ struct nilfs_suinfo {
 	__u64 sui_nlive_lastmod;
 };
 
-#define NILFS_MIN_SUINFO_SIZE	16
+#define NILFS_MIN_SUINFO_SIZE	sub_sizeof(struct nilfs_suinfo, \
+					   sui_flags)
+#define NILFS_EXT_SUINFO_SIZE	sub_sizeof(struct nilfs_suinfo, \
+					   sui_nlive_lastmod)
 
 #define NILFS_SUINFO_FNS(flag, name)					\
 static inline int							\
