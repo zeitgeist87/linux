@@ -589,8 +589,8 @@ int nilfs_sufile_add_nlive_blocks(struct inode *sufile, __u64 segnum,
 	if (value == 0 || !nilfs_sufile_ext_supported(sufile))
 		return 0;
 
-	if (nilfs_doing_gc())
-	printk(KERN_CRIT "VALUE: %llu %lld\n", (unsigned long long) segnum, (signed long long)value);
+	//if (nilfs_doing_gc())
+	//printk(KERN_CRIT "VALUE: %llu %lld\n", (unsigned long long) segnum, (signed long long)value);
 
 	down_write(&NILFS_MDT(sufile)->mi_sem);
 
@@ -611,8 +611,8 @@ int nilfs_sufile_add_nlive_blocks(struct inode *sufile, __u64 segnum,
 	else if (value > nblocks)
 		value = nblocks;
 
-	if (nilfs_doing_gc())
-	printk(KERN_CRIT "VALUE_LIVE: %lld\n", (signed long long)value);
+	//if (nilfs_doing_gc())
+	//printk(KERN_CRIT "VALUE_LIVE: %lld\n", (signed long long)value);
 
 	if (value == nlive_blocks) {
 		kunmap_atomic(kaddr);
