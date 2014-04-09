@@ -1378,6 +1378,9 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 		/* should always be positive */
 		segbuf->sb_nlive_blks_added = segbuf->sb_nlive_blks_diff +
 					      segbuf->sb_sum.nfileblk;
+		if (nilfs_doing_gc())
+		printk(KERN_CRIT "SEGUSG: %lu = %lld %lu\n", (unsigned long)segbuf->sb_nlive_blks_added, (signed long long)segbuf->sb_nlive_blks_diff, segbuf->sb_sum.nfileblk);
+
 		ret = nilfs_sufile_add_nlive_blocks(sufile, segbuf->sb_segnum,
 						    segbuf->sb_nlive_blks_added,
 						    sci->sc_seg_ctime);
@@ -1397,6 +1400,7 @@ static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
 					     segbuf->sb_fseg_start, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
 
+	printk(KERN_CRIT "CANCEL: %lu\n", (unsigned long)segbuf->sb_nlive_blks_added);
 	ret = nilfs_sufile_add_nlive_blocks(sufile, segbuf->sb_segnum,
 					    segbuf->sb_nlive_blks_added,
 					    0);

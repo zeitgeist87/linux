@@ -636,10 +636,11 @@ struct nilfs_segment_usage {
 	__le64 su_nlive_lastmod;
 };
 
-#define NILFS_MIN_SEGMENT_USAGE_SIZE	sub_sizeof(struct nilfs_segment_usage, \
-						   su_flags)
-#define NILFS_EXT_SEGMENT_USAGE_SIZE	sub_sizeof(struct nilfs_segment_usage, \
-						   su_nlive_lastmod)
+#define NILFS_MIN_SEGMENT_USAGE_SIZE	\
+	sub_sizeof(struct nilfs_segment_usage, su_flags)
+
+#define NILFS_EXT_SEGMENT_USAGE_SIZE	\
+	sub_sizeof(struct nilfs_segment_usage, su_nlive_lastmod)
 
 /* segment usage flag */
 enum {
@@ -728,10 +729,11 @@ struct nilfs_suinfo {
 	__u64 sui_nlive_lastmod;
 };
 
-#define NILFS_MIN_SUINFO_SIZE	sub_sizeof(struct nilfs_suinfo, \
-					   sui_flags)
-#define NILFS_EXT_SUINFO_SIZE	sub_sizeof(struct nilfs_suinfo, \
-					   sui_nlive_lastmod)
+#define NILFS_MIN_SUINFO_SIZE	\
+	sub_sizeof(struct nilfs_suinfo, sui_flags)
+
+#define NILFS_EXT_SUINFO_SIZE	\
+	sub_sizeof(struct nilfs_suinfo, sui_nlive_lastmod)
 
 #define NILFS_SUINFO_FNS(flag, name)					\
 static inline int							\
