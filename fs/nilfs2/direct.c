@@ -272,7 +272,8 @@ static int nilfs_direct_propagate(struct nilfs_bmap *bmap,
 		if (ret < 0)
 			return ret;
 		nilfs_dat_commit_update(dat, &oldreq, &newreq,
-					bmap->b_ptr_type == NILFS_BMAP_PTR_VS);
+					bmap->b_ptr_type == NILFS_BMAP_PTR_VS,
+					0);
 		set_buffer_nilfs_volatile(bh);
 		nilfs_direct_set_ptr(bmap, key, newreq.pr_entry_nr);
 	} else

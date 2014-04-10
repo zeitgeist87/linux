@@ -31,6 +31,7 @@
 struct nilfs_palloc_req;
 
 int nilfs_dat_translate(struct inode *, __u64, sector_t *);
+int nilfs_dat_is_live(struct inode *, __u64, int *);
 
 int nilfs_dat_prepare_alloc(struct inode *, struct nilfs_palloc_req *);
 void nilfs_dat_commit_alloc(struct inode *, struct nilfs_palloc_req *);
@@ -39,21 +40,49 @@ int nilfs_dat_prepare_start(struct inode *, struct nilfs_palloc_req *);
 void nilfs_dat_commit_start(struct inode *, struct nilfs_palloc_req *,
 			    sector_t);
 int nilfs_dat_prepare_end(struct inode *, struct nilfs_palloc_req *);
-void nilfs_dat_commit_end(struct inode *, struct nilfs_palloc_req *, int);
+void nilfs_dat_commit_end(struct inode *, struct nilfs_palloc_req *, int, int);
 void nilfs_dat_abort_end(struct inode *, struct nilfs_palloc_req *);
 int nilfs_dat_prepare_update(struct inode *, struct nilfs_palloc_req *,
 			     struct nilfs_palloc_req *);
 void nilfs_dat_commit_update(struct inode *, struct nilfs_palloc_req *,
-			     struct nilfs_palloc_req *, int);
+			     struct nilfs_palloc_req *, int, int);
 void nilfs_dat_abort_update(struct inode *, struct nilfs_palloc_req *,
 			    struct nilfs_palloc_req *);
 
 int nilfs_dat_mark_dirty(struct inode *, __u64);
 int nilfs_dat_freev(struct inode *, __u64 *, size_t);
-int nilfs_dat_move(struct inode *, __u64, sector_t);
+int nilfs_dat_move(struct inode *, __u64, sector_t, int);
+int nilfs_dat_set_inc(struct inode *, __u64);
 ssize_t nilfs_dat_get_vinfo(struct inode *, void *, unsigned, size_t);
 
 int nilfs_dat_read(struct super_block *sb, size_t entry_size,
 		   struct nilfs_inode *raw_inode, struct inode **inodep);
+void nilfs_dat_do_scan_dec(struct inode *, struct nilfs_palloc_req *, void *);
+void nilfs_dat_do_scan_inc(struct inode *, struct nilfs_palloc_req *, void *);
+
+/**
+ * nilfs_dat_scan_dec_ss - scan all dat entries for a checkpoint dec suinfo
+ * @dat: inode of dat file
+ * @cno: snapshot number
+ * @prev: previous snapshot number
+ * @next: next snapshot number
+ */
+static inline int nilfs_dat_scan_dec_ss(struct inode *dat, __u64 cno,
+					__u64 prev, __u64 next)
+{
+	__u64 data[3] = { cno, prev, next };
+
+	return nilfs_palloc_scan_entries(dat, nilfs_dat_do_scan_dec, data);
+}
+
+/**
+ * nilfs_dat_scan_dec_ss - scan all dat entries for a checkpoint inc suinfo
+ * @dat: inode of dat file
+ * @cno: snapshot number
+ */
+static inline int nilfs_dat_scan_inc_ss(struct inode *dat, __u64 cno)
+{
+	return nilfs_palloc_scan_entries(dat, nilfs_dat_do_scan_inc, &cno);
+}
 
 #endif	/* _NILFS_DAT_H */

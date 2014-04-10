@@ -95,6 +95,9 @@ enum {
  * @ns_inode_size: size of on-disk inode
  * @ns_first_ino: first not-special inode number
  * @ns_crc_seed: seed value of CRC32 calculation
+ * @ns_feature_compat: Compatible feature set
+ * @ns_feature_compat_ro: Read-only compatible feature set
+ * @ns_feature_incompat: Incompatible feature set
  */
 struct the_nilfs {
 	unsigned long		ns_flags;
@@ -188,6 +191,11 @@ struct the_nilfs {
 	int			ns_inode_size;
 	int			ns_first_ino;
 	u32			ns_crc_seed;
+
+	/* Features */
+	__u64			ns_feature_compat;
+	__u64			ns_feature_compat_ro;
+	__u64			ns_feature_incompat;
 };
 
 #define THE_NILFS_FNS(bit, name)					\
@@ -351,6 +359,21 @@ static inline __u64 nilfs_last_cno(struct the_nilfs *nilfs)
 static inline int nilfs_segment_is_active(struct the_nilfs *nilfs, __u64 n)
 {
 	return n == nilfs->ns_segnum || n == nilfs->ns_nextnum;
+}
+
+static inline int nilfs_feature_track_live_blks(struct the_nilfs *nilfs)
+{
+	return (nilfs->ns_feature_compat &
+		NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS) &&
+		(nilfs->ns_feature_compat &
+		NILFS_FEATURE_COMPAT_SUFILE_EXTENSION);
+}
+
+static inline int nilfs_feature_track_snapshots(struct the_nilfs *nilfs)
+{
+	return (nilfs->ns_feature_compat &
+		NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS) &&
+		nilfs_feature_track_live_blks(nilfs);
 }
 
 #endif /* _THE_NILFS_H */
