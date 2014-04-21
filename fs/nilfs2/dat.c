@@ -274,10 +274,13 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 	sector_t blocknr;
 	void *kaddr;
 	struct the_nilfs *nilfs = dat->i_sb->s_fs_info;
+	int decremented;
 
 	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
 					     req->pr_entry_bh, kaddr);
+	decremented = nilfs_dat_entry_is_dec(entry) &&
+			le64_to_cpu(entry->de_end) == nilfs_mdt_cno(dat);
 	end = start = le64_to_cpu(entry->de_start);
 	if (!dead) {
 		end = nilfs_mdt_cno(dat);
@@ -293,7 +296,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 	else {
 		nilfs_dat_commit_entry(dat, req);
 
-		if (!dead && count_blocks &&
+		if (!decremented && count_blocks &&
 		    nilfs_feature_track_live_blks(nilfs)) {
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 

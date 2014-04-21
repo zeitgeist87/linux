@@ -1378,8 +1378,6 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 		/* should always be positive */
 		segbuf->sb_nlive_blks_added = segbuf->sb_nlive_blks_diff +
 					      segbuf->sb_sum.nfileblk;
-		if (nilfs_doing_gc())
-		printk(KERN_CRIT "SEGUSG: %llu %lu = %lld %lu\n", (unsigned long long)segbuf->sb_segnum, (unsigned long)segbuf->sb_nlive_blks_added, (signed long long)segbuf->sb_nlive_blks_diff, segbuf->sb_sum.nfileblk);
 
 		ret = nilfs_sufile_add_nlive_blocks(sufile, segbuf->sb_segnum,
 						    segbuf->sb_nlive_blks_added,
