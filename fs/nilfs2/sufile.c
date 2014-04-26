@@ -577,7 +577,7 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
  *
  * %-ENOENT - the specified block does not exist (hole block)
  */
-int nilfs_sufile_add_nlive_blocks(struct inode *sufile, __u64 segnum,
+int nilfs_sufile_mod_nlive_blks(struct inode *sufile, __u64 segnum,
 				  __s64 value, time_t modtime)
 {
 	struct buffer_head *bh;

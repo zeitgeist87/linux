@@ -28,7 +28,6 @@
 #include <linux/slab.h>
 #include "page.h"
 #include "segbuf.h"
-#include "sufile.h"
 
 
 struct nilfs_write_info {

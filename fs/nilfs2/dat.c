@@ -300,7 +300,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 		    nilfs_feature_track_live_blks(nilfs)) {
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
-			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile,
+			nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile,
 						       segnum, -1,
 						       nilfs->ns_ctime);
 		}
@@ -661,14 +661,23 @@ static __u64 nilfs_dat_replace_snapshot(struct nilfs_dat_entry *entry,
 	return NILFS_ENTRY_DEC;
 }
 
-void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
-			   void *data)
+struct nilfs_dat_scan_data {
+	__u64 ss;
+	__u64 prev_ss;
+	__u64 next_ss;
+	struct nilfs_sufile_accu_state accu_state;
+};
+
+static void nilfs_dat_do_scan_dec(struct inode *dat,
+				  struct nilfs_palloc_req *req,
+				  void *data)
 {
 	struct the_nilfs *nilfs;
 	struct nilfs_dat_entry *entry;
 	void *kaddr;
-	__u64 prev_ss, segnum;
-	__u64 *ssp = data, ss = ssp[0], prev = ssp[1], next = ssp[2];
+	__u64 prev_ss;
+	struct nilfs_dat_scan_data *sd = data;
+	__u64 ss = sd->ss, prev = sd->prev_ss, next = sd->next_ss;
 	sector_t blocknr;
 	int nblocks;
 
@@ -705,23 +714,23 @@ void nilfs_dat_do_scan_dec(struct inode *dat, struct nilfs_palloc_req *req,
 				return;
 
 			nilfs = dat->i_sb->s_fs_info;
-			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
-			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile, segnum,
-						       (s64)nblocks, 0);
+			nilfs_sufile_accu_nlive_blks(nilfs, blocknr,
+						     nblocks, &sd->accu_state);
 		}
 	} else
 		kunmap_atomic(kaddr);
 }
 
-void nilfs_dat_do_scan_inc(struct inode *dat, struct nilfs_palloc_req *req,
-			   void *data)
+static void nilfs_dat_do_scan_inc(struct inode *dat,
+				  struct nilfs_palloc_req *req,
+				  void *data)
 {
 	struct the_nilfs *nilfs;
 	struct nilfs_dat_entry *entry;
 	void *kaddr;
-	__u64 prev_ss, ss = *((__u64 *)data);
-	__u64 segnum;
+	struct nilfs_dat_scan_data *sd = data;
+	__u64 prev_ss, ss = sd->ss;
 	sector_t blocknr;
 
 	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
@@ -747,13 +756,52 @@ void nilfs_dat_do_scan_inc(struct inode *dat, struct nilfs_palloc_req *req,
 		 */
 		if (prev_ss == NILFS_ENTRY_DEC) {
 			nilfs = dat->i_sb->s_fs_info;
-			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
-			nilfs_sufile_add_nlive_blocks(nilfs->ns_sufile,
-						       segnum, 1, 0);
+			nilfs_sufile_accu_nlive_blks(nilfs, blocknr,
+						     1, &sd->accu_state);
 		}
 	} else
 		kunmap_atomic(kaddr);
+}
+
+/**
+ * nilfs_dat_scan_dec_ss - scan all dat entries for a checkpoint dec suinfo
+ * @dat: inode of dat file
+ * @ss: snapshot number
+ * @prev: previous snapshot number
+ * @next: next snapshot number
+ */
+int nilfs_dat_scan_dec_ss(struct inode *dat, __u64 ss,
+					__u64 prev, __u64 next)
+{
+	struct nilfs_dat_scan_data data = {.ss = ss, .prev_ss = prev,
+					   .next_ss = next};
+	struct the_nilfs *nilfs = dat->i_sb->s_fs_info;
+	int ret;
+
+	ret = nilfs_palloc_scan_entries(dat, nilfs_dat_do_scan_dec, &data);
+
+	nilfs_sufile_accu_nlive_blks_final(nilfs, &data.accu_state);
+
+	return ret;
+}
+
+/**
+ * nilfs_dat_scan_dec_ss - scan all dat entries for a checkpoint inc suinfo
+ * @dat: inode of dat file
+ * @ss: snapshot number
+ */
+int nilfs_dat_scan_inc_ss(struct inode *dat, __u64 ss)
+{
+	struct nilfs_dat_scan_data data = {.ss = ss};
+	struct the_nilfs *nilfs = dat->i_sb->s_fs_info;
+	int ret;
+
+	ret = nilfs_palloc_scan_entries(dat, nilfs_dat_do_scan_inc, &data);
+
+	nilfs_sufile_accu_nlive_blks_final(nilfs, &data.accu_state);
+
+	return ret;
 }
 
 ssize_t nilfs_dat_get_vinfo(struct inode *dat, void *buf, unsigned visz,
