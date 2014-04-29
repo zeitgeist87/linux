@@ -106,6 +106,7 @@ static inline int nilfs_bmap_is_new_ptr(unsigned long ptr)
  * @b_ptr_type: pointer type
  * @b_state: state
  * @b_nchildren_per_block: maximum number of child nodes for non-root nodes
+ * @b_private: pointer for extra data
  */
 struct nilfs_bmap {
 	union {
@@ -120,6 +121,7 @@ struct nilfs_bmap {
 	int b_ptr_type;
 	int b_state;
 	__u16 b_nchildren_per_block;
+	void *b_private;
 };
 
 /* pointer type */
@@ -222,7 +224,7 @@ static inline void nilfs_bmap_commit_end_ptr(struct nilfs_bmap *bmap,
 					     struct inode *dat)
 {
 	if (dat)
-		nilfs_dat_commit_end(dat, &req->bpr_req,
+		nilfs_dat_commit_end(dat, &req->bpr_req, bmap->b_private,
 				     bmap->b_ptr_type == NILFS_BMAP_PTR_VS,
 				     bmap->b_inode->i_ino != NILFS_SUFILE_INO);
 }

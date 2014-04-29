@@ -267,10 +267,11 @@ int nilfs_dat_prepare_end(struct inode *dat, struct nilfs_palloc_req *req)
 }
 
 void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
+			  struct nilfs_sufile_accu_state *state,
 			  int dead, int count_blocks)
 {
 	struct nilfs_dat_entry *entry;
-	__u64 start, end, segnum;
+	__u64 start, end;
 	sector_t blocknr;
 	void *kaddr;
 	struct the_nilfs *nilfs = dat->i_sb->s_fs_info;
@@ -298,11 +299,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 
 		if (!decremented && count_blocks &&
 		    nilfs_feature_track_live_blks(nilfs)) {
-			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
-
-			nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile,
-						       segnum, -1,
-						       nilfs->ns_ctime);
+			nilfs_sufile_accu_nlive_blks(nilfs, state, blocknr, -1);
 		}
 	}
 }
@@ -346,7 +343,7 @@ void nilfs_dat_commit_update(struct inode *dat,
 			     struct nilfs_palloc_req *newreq,
 			     int dead, int count_blocks)
 {
-	nilfs_dat_commit_end(dat, oldreq, dead, count_blocks);
+	nilfs_dat_commit_end(dat, oldreq, NULL, dead, count_blocks);
 	nilfs_dat_commit_alloc(dat, newreq);
 }
 
@@ -715,8 +712,8 @@ static void nilfs_dat_do_scan_dec(struct inode *dat,
 
 			nilfs = dat->i_sb->s_fs_info;
 
-			nilfs_sufile_accu_nlive_blks(nilfs, blocknr,
-						     nblocks, &sd->accu_state);
+			nilfs_sufile_accu_nlive_blks(nilfs, &sd->accu_state,
+						     blocknr, nblocks);
 		}
 	} else
 		kunmap_atomic(kaddr);
@@ -757,8 +754,8 @@ static void nilfs_dat_do_scan_inc(struct inode *dat,
 		if (prev_ss == NILFS_ENTRY_DEC) {
 			nilfs = dat->i_sb->s_fs_info;
 
-			nilfs_sufile_accu_nlive_blks(nilfs, blocknr,
-						     1, &sd->accu_state);
+			nilfs_sufile_accu_nlive_blks(nilfs, &sd->accu_state,
+						     blocknr, 1);
 		}
 	} else
 		kunmap_atomic(kaddr);
@@ -781,7 +778,7 @@ int nilfs_dat_scan_dec_ss(struct inode *dat, __u64 ss,
 
 	ret = nilfs_palloc_scan_entries(dat, nilfs_dat_do_scan_dec, &data);
 
-	nilfs_sufile_accu_nlive_blks_final(nilfs, &data.accu_state);
+	nilfs_sufile_flush_nlive_blks(nilfs, &data.accu_state);
 
 	return ret;
 }
@@ -799,7 +796,7 @@ int nilfs_dat_scan_inc_ss(struct inode *dat, __u64 ss)
 
 	ret = nilfs_palloc_scan_entries(dat, nilfs_dat_do_scan_inc, &data);
 
-	nilfs_sufile_accu_nlive_blks_final(nilfs, &data.accu_state);
+	nilfs_sufile_flush_nlive_blks(nilfs, &data.accu_state);
 
 	return ret;
 }

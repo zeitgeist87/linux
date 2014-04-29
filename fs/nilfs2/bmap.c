@@ -31,6 +31,7 @@
 #include "mdt.h"
 #include "dat.h"
 #include "alloc.h"
+#include "sufile.h"
 
 struct inode *nilfs_bmap_get_dat(const struct nilfs_bmap *bmap)
 {
@@ -237,28 +238,37 @@ int nilfs_bmap_delete(struct nilfs_bmap *bmap, unsigned long key)
 
 static int nilfs_bmap_do_truncate(struct nilfs_bmap *bmap, unsigned long key)
 {
+	struct the_nilfs *nilfs = bmap->b_inode->i_sb->s_fs_info;
+	struct nilfs_sufile_accu_state state = {0};
 	__u64 lastkey;
 	int ret;
+
+	state.as_modtime = nilfs->ns_ctime;
+	bmap->b_private = &state;
 
 	ret = bmap->b_ops->bop_last_key(bmap, &lastkey);
 	if (ret < 0) {
 		if (ret == -ENOENT)
 			ret = 0;
-		return ret;
+		goto out;
 	}
 
 	while (key <= lastkey) {
 		ret = nilfs_bmap_do_delete(bmap, lastkey);
 		if (ret < 0)
-			return ret;
+			goto out;
 		ret = bmap->b_ops->bop_last_key(bmap, &lastkey);
 		if (ret < 0) {
 			if (ret == -ENOENT)
 				ret = 0;
-			return ret;
+			goto out;
 		}
 	}
-	return 0;
+
+out:
+	nilfs_sufile_flush_nlive_blks(nilfs, &state);
+	bmap->b_private = NULL;
+	return ret;
 }
 
 /**
@@ -490,6 +500,7 @@ int nilfs_bmap_read(struct nilfs_bmap *bmap, struct nilfs_inode *raw_inode)
 
 	init_rwsem(&bmap->b_sem);
 	bmap->b_state = 0;
+	bmap->b_private = NULL;
 	bmap->b_inode = &NILFS_BMAP_I(bmap)->vfs_inode;
 	switch (bmap->b_inode->i_ino) {
 	case NILFS_DAT_INO:
@@ -551,6 +562,7 @@ void nilfs_bmap_init_gc(struct nilfs_bmap *bmap)
 	bmap->b_last_allocated_key = 0;
 	bmap->b_last_allocated_ptr = NILFS_BMAP_INVALID_PTR;
 	bmap->b_state = 0;
+	bmap->b_private = NULL;
 	nilfs_btree_init_gc(bmap);
 }
 

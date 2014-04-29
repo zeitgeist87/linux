@@ -1513,8 +1513,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	if (!nfinfo)
 		goto out;
 
-	accu_state.curr_segnum = segbuf->sb_segnum;
-	accu_state.curr_nblocks = &segbuf->sb_nlive_blks_diff;
+	accu_state.as_curr_segnum = segbuf->sb_segnum;
+	accu_state.as_curr_nblocks = &segbuf->sb_nlive_blks_diff;
 
 	blocknr = segbuf->sb_pseg_start + segbuf->sb_sum.nsumblk;
 	ssp.bh = NILFS_SEGBUF_FIRST_BH(&segbuf->sb_segsum_buffers);
@@ -1542,8 +1542,8 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 		if (track_live_blks && (ino == NILFS_DAT_INO ||
 		    (ino == NILFS_SUFILE_INO && !buffer_nilfs_node(bh))))
-			nilfs_sufile_accu_nlive_blks(nilfs, bh->b_blocknr,
-						     -1, &accu_state);
+			nilfs_sufile_accu_nlive_blks(nilfs, &accu_state,
+						     bh->b_blocknr, -1);
 
 		bh_org = bh;
 		get_bh(bh_org);
@@ -1570,7 +1570,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	}
 
 	if (track_live_blks)
-		nilfs_sufile_accu_nlive_blks_final(nilfs, &accu_state);
+		nilfs_sufile_flush_nlive_blks(nilfs, &accu_state);
 
  out:
 	return 0;

@@ -46,7 +46,6 @@ int nilfs_sufile_alloc(struct inode *, __u64 *);
 int nilfs_sufile_mark_dirty(struct inode *sufile, __u64 segnum);
 int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
 				   unsigned long nblocks, time_t modtime);
-int nilfs_sufile_mod_nlive_blks(struct inode *, __u64, __s64, time_t);
 int nilfs_sufile_get_stat(struct inode *, struct nilfs_sustat *);
 ssize_t nilfs_sufile_get_suinfo(struct inode *, __u64, void *, unsigned,
 				size_t);
@@ -149,53 +148,23 @@ static inline int nilfs_sufile_set_error(struct inode *sufile, __u64 segnum)
 				   nilfs_sufile_do_set_error);
 }
 
-struct nilfs_sufile_accu_state {
-	__u64 segnum;
-	__s64 nblocks;
-	time_t modtime;
+#define NILFS_SUFILE_ACCU_SLOTS 5
 
-	/*
-	 * Can be used to modify the block counter of a segment, that is
-	 * not yet written to disk. Set curr_segnum_counter to NULL to disable
-	 * it.
-	 */
-	__u64 curr_segnum;
-	__s64 *curr_nblocks;
+struct nilfs_sufile_accu_state {
+	__u64 as_curr_segnum;
+	__s64 *as_curr_nblocks;
+
+	time_t as_modtime;
+	__u64 as_segnums[NILFS_SUFILE_ACCU_SLOTS];
+	__s64 as_nblocks[NILFS_SUFILE_ACCU_SLOTS];
 };
 
-static inline void nilfs_sufile_accu_nlive_blks(struct the_nilfs *nilfs,
-				sector_t blocknr, __s64 value,
-				struct nilfs_sufile_accu_state *state)
-{
-	__u64 segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
-	if (segnum >= nilfs->ns_nsegments)
-		return;
-
-	if (state->curr_nblocks && segnum == state->curr_segnum) {
-		*state->curr_nblocks += value;
-		return;
-	}
-
-	if (segnum != state->segnum) {
-		if (state->nblocks)
-			nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile,
-						    state->segnum,
-						    state->nblocks,
-						    state->modtime);
-		state->segnum = segnum;
-		state->nblocks = 0;
-	}
-
-	state->nblocks += value;
-}
-
-static inline void nilfs_sufile_accu_nlive_blks_final(struct the_nilfs *nilfs,
-					struct nilfs_sufile_accu_state *state)
-{
-	if (state->nblocks)
-		nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile, state->segnum,
-					    state->nblocks, state->modtime);
-}
+int nilfs_sufile_flush_nlive_blks(struct the_nilfs *,
+				  struct nilfs_sufile_accu_state *);
+int nilfs_sufile_accu_nlive_blks(struct the_nilfs *,
+				 struct nilfs_sufile_accu_state *,
+				 sector_t, __s64);
+int nilfs_sufile_mod_nlive_blks(struct inode *, __u64, __s64, time_t);
 
 #endif	/* _NILFS_SUFILE_H */
