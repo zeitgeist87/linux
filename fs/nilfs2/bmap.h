@@ -36,6 +36,7 @@
 
 
 struct nilfs_bmap;
+struct nilfs_sufile_accu_state;
 
 /**
  * union nilfs_bmap_ptr_req - request for bmap ptr
@@ -161,6 +162,9 @@ int nilfs_bmap_last_key(struct nilfs_bmap *, unsigned long *);
 int nilfs_bmap_truncate(struct nilfs_bmap *, unsigned long);
 void nilfs_bmap_clear(struct nilfs_bmap *);
 int nilfs_bmap_propagate(struct nilfs_bmap *, struct buffer_head *);
+int nilfs_bmap_propagate_with_state(struct nilfs_bmap *,
+				    struct nilfs_sufile_accu_state *,
+				    struct buffer_head *);
 void nilfs_bmap_lookup_dirty_buffers(struct nilfs_bmap *, struct list_head *);
 int nilfs_bmap_assign(struct nilfs_bmap *, struct buffer_head **,
 		      unsigned long, union nilfs_binfo *);

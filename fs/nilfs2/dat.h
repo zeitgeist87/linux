@@ -47,7 +47,8 @@ void nilfs_dat_abort_end(struct inode *, struct nilfs_palloc_req *);
 int nilfs_dat_prepare_update(struct inode *, struct nilfs_palloc_req *,
 			     struct nilfs_palloc_req *);
 void nilfs_dat_commit_update(struct inode *, struct nilfs_palloc_req *,
-			     struct nilfs_palloc_req *, int, int);
+			     struct nilfs_palloc_req *,
+			     struct nilfs_sufile_accu_state *, int, int);
 void nilfs_dat_abort_update(struct inode *, struct nilfs_palloc_req *,
 			    struct nilfs_palloc_req *);
 

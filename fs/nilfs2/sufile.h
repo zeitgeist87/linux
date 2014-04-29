@@ -151,20 +151,15 @@ static inline int nilfs_sufile_set_error(struct inode *sufile, __u64 segnum)
 #define NILFS_SUFILE_ACCU_SLOTS 5
 
 struct nilfs_sufile_accu_state {
-	__u64 as_curr_segnum;
-	__s64 *as_curr_nblocks;
-
-	time_t as_modtime;
 	__u64 as_segnums[NILFS_SUFILE_ACCU_SLOTS];
 	__s64 as_nblocks[NILFS_SUFILE_ACCU_SLOTS];
 };
 
 
-int nilfs_sufile_flush_nlive_blks(struct the_nilfs *,
+int nilfs_sufile_flush_nlive_blks(struct inode *sufile,
 				  struct nilfs_sufile_accu_state *);
-int nilfs_sufile_accu_nlive_blks(struct the_nilfs *,
+int nilfs_sufile_accu_nlive_blks(struct inode *sufile,
 				 struct nilfs_sufile_accu_state *,
-				 sector_t, __s64);
-int nilfs_sufile_mod_nlive_blks(struct inode *, __u64, __s64, time_t);
+				 __u64, __s64);
 
 #endif	/* _NILFS_SUFILE_H */

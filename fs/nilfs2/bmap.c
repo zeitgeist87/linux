@@ -239,12 +239,14 @@ int nilfs_bmap_delete(struct nilfs_bmap *bmap, unsigned long key)
 static int nilfs_bmap_do_truncate(struct nilfs_bmap *bmap, unsigned long key)
 {
 	struct the_nilfs *nilfs = bmap->b_inode->i_sb->s_fs_info;
-	struct nilfs_sufile_accu_state state = {0};
+	struct nilfs_sufile_accu_state accu_state;
 	__u64 lastkey;
 	int ret;
 
-	state.as_modtime = nilfs->ns_ctime;
-	bmap->b_private = &state;
+	if (nilfs_feature_track_live_blks(nilfs)) {
+		memset(&accu_state, 0, sizeof(accu_state));
+		bmap->b_private = &accu_state;
+	}
 
 	ret = bmap->b_ops->bop_last_key(bmap, &lastkey);
 	if (ret < 0) {
@@ -266,8 +268,10 @@ static int nilfs_bmap_do_truncate(struct nilfs_bmap *bmap, unsigned long key)
 	}
 
 out:
-	nilfs_sufile_flush_nlive_blks(nilfs, &state);
-	bmap->b_private = NULL;
+	if (nilfs_feature_track_live_blks(nilfs)) {
+		nilfs_sufile_flush_nlive_blks(nilfs->ns_sufile, &accu_state);
+		bmap->b_private = NULL;
+	}
 	return ret;
 }
 
@@ -332,6 +336,25 @@ int nilfs_bmap_propagate(struct nilfs_bmap *bmap, struct buffer_head *bh)
 
 	down_write(&bmap->b_sem);
 	ret = bmap->b_ops->bop_propagate(bmap, bh);
+	up_write(&bmap->b_sem);
+
+	return nilfs_bmap_convert_error(bmap, __func__, ret);
+}
+
+int nilfs_bmap_propagate_with_state(struct nilfs_bmap *bmap,
+				    struct nilfs_sufile_accu_state *accu_state,
+				    struct buffer_head *bh)
+{
+	int ret;
+
+	down_write(&bmap->b_sem);
+
+	bmap->b_private = accu_state;
+
+	ret = bmap->b_ops->bop_propagate(bmap, bh);
+
+	bmap->b_private = NULL;
+
 	up_write(&bmap->b_sem);
 
 	return nilfs_bmap_convert_error(bmap, __func__, ret);
