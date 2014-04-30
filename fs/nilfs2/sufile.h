@@ -157,8 +157,9 @@ struct nilfs_sufile_mod {
 };
 
 struct nilfs_sufile_mod_cache {
-	size_t mc_size;
 	struct nilfs_sufile_mod *mc_mods;
+	size_t mc_size;
+	bool mc_dirty;
 };
 
 static inline int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *mc,
@@ -172,6 +173,9 @@ static inline int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *mc,
 			      GFP_KERNEL);
 	if (!mc->mc_mods)
 		return -ENOMEM;
+
+	mc->mc_dirty = false;
+
 	return 0;
 }
 
