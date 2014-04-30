@@ -1232,6 +1232,8 @@ static int nilfs_sufile_do_flush_nlive_blks(struct inode *sufile,
 
 	kaddr = kmap_atomic(bh->b_page);
 
+	printk(KERN_INFO "BEGIN LOOP:\n");
+
 	for (i = 0; i < nmods; ++i, ++mods) {
 		segnum = mods->m_segnum;
 		value = mods->m_value;
@@ -1250,6 +1252,7 @@ static int nilfs_sufile_do_flush_nlive_blks(struct inode *sufile,
 		nblocks = le32_to_cpu(su->su_nblocks);
 		nlive_blocks = le32_to_cpu(su->su_nlive_blks);
 
+		printk(KERN_INFO "VALUE: %llu %lld\n", (unsigned long long) segnum, (long long) value);
 		value += nlive_blocks;
 		if (value < 0)
 			value = 0;
