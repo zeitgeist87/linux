@@ -258,6 +258,7 @@ static int nilfs_bmap_do_truncate(struct nilfs_bmap *bmap, unsigned long key)
 			return ret;
 		}
 	}
+
 	return 0;
 }
 
@@ -282,6 +283,25 @@ int nilfs_bmap_truncate(struct nilfs_bmap *bmap, unsigned long key)
 
 	down_write(&bmap->b_sem);
 	ret = nilfs_bmap_do_truncate(bmap, key);
+	up_write(&bmap->b_sem);
+
+	return nilfs_bmap_convert_error(bmap, __func__, ret);
+}
+
+int nilfs_bmap_truncate_with_mc(struct nilfs_bmap *bmap,
+				struct nilfs_sufile_mod_cache *mc,
+				unsigned long key)
+{
+	int ret;
+
+	down_write(&bmap->b_sem);
+
+	bmap->b_private = mc;
+
+	ret = nilfs_bmap_do_truncate(bmap, key);
+
+	bmap->b_private = NULL;
+
 	up_write(&bmap->b_sem);
 
 	return nilfs_bmap_convert_error(bmap, __func__, ret);
@@ -322,6 +342,25 @@ int nilfs_bmap_propagate(struct nilfs_bmap *bmap, struct buffer_head *bh)
 
 	down_write(&bmap->b_sem);
 	ret = bmap->b_ops->bop_propagate(bmap, bh);
+	up_write(&bmap->b_sem);
+
+	return nilfs_bmap_convert_error(bmap, __func__, ret);
+}
+
+int nilfs_bmap_propagate_with_mc(struct nilfs_bmap *bmap,
+				 struct nilfs_sufile_mod_cache *mc,
+				 struct buffer_head *bh)
+{
+	int ret;
+
+	down_write(&bmap->b_sem);
+
+	bmap->b_private = mc;
+
+	ret = bmap->b_ops->bop_propagate(bmap, bh);
+
+	bmap->b_private = NULL;
+
 	up_write(&bmap->b_sem);
 
 	return nilfs_bmap_convert_error(bmap, __func__, ret);
@@ -467,6 +506,7 @@ __u64 nilfs_bmap_find_target_in_group(const struct nilfs_bmap *bmap)
 
 static struct lock_class_key nilfs_bmap_dat_lock_key;
 static struct lock_class_key nilfs_bmap_mdt_lock_key;
+static struct lock_class_key nilfs_bmap_sufile_lock_key;
 
 /**
  * nilfs_bmap_read - read a bmap from an inode
@@ -489,6 +529,7 @@ int nilfs_bmap_read(struct nilfs_bmap *bmap, struct nilfs_inode *raw_inode)
 
 	init_rwsem(&bmap->b_sem);
 	bmap->b_state = 0;
+	bmap->b_private = NULL;
 	bmap->b_inode = &NILFS_BMAP_I(bmap)->vfs_inode;
 	switch (bmap->b_inode->i_ino) {
 	case NILFS_DAT_INO:
@@ -498,11 +539,16 @@ int nilfs_bmap_read(struct nilfs_bmap *bmap, struct nilfs_inode *raw_inode)
 		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_dat_lock_key);
 		break;
 	case NILFS_CPFILE_INO:
-	case NILFS_SUFILE_INO:
 		bmap->b_ptr_type = NILFS_BMAP_PTR_VS;
 		bmap->b_last_allocated_key = 0;
 		bmap->b_last_allocated_ptr = NILFS_BMAP_INVALID_PTR;
 		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_mdt_lock_key);
+		break;
+	case NILFS_SUFILE_INO:
+		bmap->b_ptr_type = NILFS_BMAP_PTR_VS;
+		bmap->b_last_allocated_key = 0;
+		bmap->b_last_allocated_ptr = NILFS_BMAP_INVALID_PTR;
+		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_sufile_lock_key);
 		break;
 	case NILFS_IFILE_INO:
 		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_mdt_lock_key);
@@ -545,6 +591,7 @@ void nilfs_bmap_init_gc(struct nilfs_bmap *bmap)
 	bmap->b_last_allocated_key = 0;
 	bmap->b_last_allocated_ptr = NILFS_BMAP_INVALID_PTR;
 	bmap->b_state = 0;
+	bmap->b_private = NULL;
 	nilfs_btree_init_gc(bmap);
 }
 

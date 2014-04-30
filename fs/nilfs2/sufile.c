@@ -453,6 +453,11 @@ void nilfs_sufile_do_scrap(struct inode *sufile, __u64 segnum,
 	su->su_lastmod = cpu_to_le64(0);
 	su->su_nblocks = cpu_to_le32(0);
 	su->su_flags = cpu_to_le32(1UL << NILFS_SEGMENT_USAGE_DIRTY);
+	if (nilfs_sufile_ext_supported(sufile)) {
+		su->su_nlive_blks = cpu_to_le32(0);
+		su->su_pad = cpu_to_le32(0);
+		su->su_nlive_lastmod = cpu_to_le64(0);
+	}
 	kunmap_atomic(kaddr);
 
 	nilfs_sufile_mod_counter(header_bh, clean ? (u64)-1 : 0, dirty ? 0 : 1);
@@ -482,7 +487,7 @@ void nilfs_sufile_do_free(struct inode *sufile, __u64 segnum,
 	WARN_ON(!nilfs_segment_usage_dirty(su));
 
 	sudirty = nilfs_segment_usage_dirty(su);
-	nilfs_segment_usage_set_clean(su);
+	nilfs_segment_usage_set_clean(su, NILFS_MDT(sufile)->mi_entry_size);
 	kunmap_atomic(kaddr);
 	mark_buffer_dirty(su_bh);
 
@@ -537,6 +542,9 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
 	if (modtime)
 		su->su_lastmod = cpu_to_le64(modtime);
 	su->su_nblocks = cpu_to_le32(nblocks);
+	if (nilfs_sufile_ext_supported(sufile) &&
+	    nblocks < le32_to_cpu(su->su_nlive_blks))
+		su->su_nlive_blks = su->su_nblocks;
 	kunmap_atomic(kaddr);
 
 	mark_buffer_dirty(bh);
@@ -698,7 +706,7 @@ static int nilfs_sufile_truncate_range(struct inode *sufile,
 		nc = 0;
 		for (su = su2, j = 0; j < n; j++, su = (void *)su + susz) {
 			if (nilfs_segment_usage_error(su)) {
-				nilfs_segment_usage_set_clean(su);
+				nilfs_segment_usage_set_clean(su, susz);
 				nc++;
 			}
 		}
@@ -821,6 +829,8 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
 	void *kaddr;
 	unsigned long nsegs, segusages_per_block;
+	__u64 lm = 0;
+	__u32 nlb = 0;
 	ssize_t n;
 	int ret, i, j;
 
@@ -858,6 +868,17 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 			if (nilfs_segment_is_active(nilfs, segnum + j))
 				si->sui_flags |=
 					(1UL << NILFS_SEGMENT_USAGE_ACTIVE);
+
+			if (susz >= NILFS_EXT_SEGMENT_USAGE_SIZE) {
+				nlb = le32_to_cpu(su->su_nlive_blks);
+				lm = le64_to_cpu(su->su_nlive_lastmod);
+			}
+
+			if (sisz >= NILFS_EXT_SUINFO_SIZE) {
+				si->sui_nlive_blks = nlb;
+				si->sui_pad = 0;
+				si->sui_nlive_lastmod = lm;
+			}
 		}
 		kunmap_atomic(kaddr);
 		brelse(su_bh);
@@ -911,6 +932,9 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 				(~0UL << __NR_NILFS_SUINFO_UPDATE_FIELDS))
 			|| (nilfs_suinfo_update_nblocks(sup) &&
 				sup->sup_sui.sui_nblocks >
+				nilfs->ns_blocks_per_segment)
+			|| (nilfs_suinfo_update_nlive_blks(sup) &&
+				sup->sup_sui.sui_nlive_blks >
 				nilfs->ns_blocks_per_segment))
 			return -EINVAL;
 	}
@@ -937,6 +961,16 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 
 		if (nilfs_suinfo_update_nblocks(sup))
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
+
+		if (nilfs_suinfo_update_nlive_blks(sup) &&
+		    nilfs_sufile_ext_supported(sufile))
+			su->su_nlive_blks =
+				cpu_to_le32(sup->sup_sui.sui_nlive_blks);
+
+		if (nilfs_suinfo_update_nlive_lastmod(sup) &&
+		    nilfs_sufile_ext_supported(sufile))
+			su->su_nlive_lastmod =
+				cpu_to_le64(sup->sup_sui.sui_nlive_lastmod);
 
 		if (nilfs_suinfo_update_flags(sup)) {
 			/*
@@ -1149,6 +1183,159 @@ out_sem:
 	up_read(&NILFS_MDT(sufile)->mi_sem);
 
 	range->len = ndiscarded << nilfs->ns_blocksize_bits;
+	return ret;
+}
+
+static inline int nilfs_sufile_mc_empty(struct nilfs_sufile_mod_cache *mc)
+{
+	struct nilfs_sufile_mod *mods = mc->mc_mods;
+	int i;
+
+	for (i = 0; i < mc->mc_size; ++i, ++mods)
+		if (mods->m_value)
+			return 0;
+
+	return 1;
+}
+
+static inline void nilfs_sufile_mc_clear(struct nilfs_sufile_mod_cache *mc)
+{
+	struct nilfs_sufile_mod *mods = mc->mc_mods;
+	int i;
+
+	for (i = 0; i < mc->mc_size; ++i, ++mods)
+		mods->m_value = 0;
+}
+
+static int nilfs_sufile_do_flush_nlive_blks(struct inode *sufile,
+					    struct nilfs_sufile_mod *mods,
+					    int nmods)
+{
+	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
+	struct buffer_head *bh;
+	struct nilfs_segment_usage *su;
+	void *kaddr;
+	__u32 nblocks, nlive_blocks;
+	__s64 value;
+	__u64 segnum;
+	unsigned long blkoff;
+	int i, ret, isdirty = 0;
+
+	down_write(&NILFS_MDT(sufile)->mi_sem);
+
+	blkoff = nilfs_sufile_get_blkoff(sufile, mods->m_segnum);
+
+	ret = nilfs_sufile_get_segment_usage_block(sufile, mods->m_segnum,
+						   0, &bh);
+	if (unlikely(ret < 0))
+		goto out_sem;
+
+	kaddr = kmap_atomic(bh->b_page);
+
+	for (i = 0; i < nmods; ++i, ++mods) {
+		segnum = mods->m_segnum;
+		value = mods->m_value;
+		if (!value)
+			continue;
+
+		if (blkoff != nilfs_sufile_get_blkoff(sufile, segnum)) {
+			ret = -EINVAL;
+			goto out_unmap;
+		}
+
+		su = nilfs_sufile_block_get_segment_usage(sufile, segnum,
+							  bh, kaddr);
+		WARN_ON(nilfs_segment_usage_error(su));
+
+		nblocks = le32_to_cpu(su->su_nblocks);
+		nlive_blocks = le32_to_cpu(su->su_nlive_blks);
+
+		value += nlive_blocks;
+		if (value < 0)
+			value = 0;
+		else if (value > nblocks)
+			value = nblocks;
+
+		if (value == nlive_blocks)
+			continue;
+
+		su->su_nlive_blks = cpu_to_le32(value);
+		su->su_nlive_lastmod = cpu_to_le64(nilfs->ns_ctime);
+
+		isdirty = 1;
+	}
+
+out_unmap:
+	kunmap_atomic(kaddr);
+
+	if (isdirty) {
+		mark_buffer_dirty(bh);
+		nilfs_mdt_mark_dirty(sufile);
+	}
+
+	put_bh(bh);
+out_sem:
+	up_write(&NILFS_MDT(sufile)->mi_sem);
+	return ret;
+}
+
+int nilfs_sufile_flush_nlive_blks(struct inode *sufile,
+				  struct nilfs_sufile_mod_cache *mc)
+{
+	int ret;
+
+	if (!mc || !nilfs_sufile_ext_supported(sufile) ||
+	    nilfs_sufile_mc_empty(mc))
+		return 0;
+
+	ret = nilfs_sufile_do_flush_nlive_blks(sufile,
+					       mc->mc_mods,
+					       mc->mc_size);
+
+	nilfs_sufile_mc_clear(mc);
+
+	return ret;
+}
+
+int nilfs_sufile_mod_nlive_blks(struct inode *sufile,
+				struct nilfs_sufile_mod_cache *mc,
+				__u64 segnum, __s64 value)
+{
+	struct nilfs_sufile_mod *mods;
+	struct nilfs_sufile_mod m;
+	unsigned long blkoff, prev_blkoff;
+	int i, ret;
+
+	if (value == 0 || !nilfs_sufile_ext_supported(sufile))
+		return 0;
+
+	if (!mc) {
+		m.m_segnum = segnum;
+		m.m_value = value;
+		return nilfs_sufile_do_flush_nlive_blks(sufile, &m, 1);
+	}
+
+	blkoff = nilfs_sufile_get_blkoff(sufile, segnum);
+	prev_blkoff = nilfs_sufile_get_blkoff(sufile, mc->mc_mods->m_segnum);
+
+	mods = mc->mc_mods;
+
+	if (blkoff == prev_blkoff || nilfs_sufile_mc_empty(mc)) {
+		for (i = 0; i < mc->mc_size; ++i, ++mods) {
+			if (mods->m_value == 0 ||
+			    mods->m_segnum == segnum) {
+				mods->m_segnum = segnum;
+				mods->m_value += value;
+				return 0;
+			}
+		}
+	}
+
+	ret = nilfs_sufile_flush_nlive_blks(sufile, mc);
+
+	mc->mc_mods->m_segnum = segnum;
+	mc->mc_mods->m_value = value;
+
 	return ret;
 }
 

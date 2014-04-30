@@ -28,6 +28,11 @@
 #include <linux/nilfs2_fs.h>
 #include "mdt.h"
 
+static inline int
+nilfs_sufile_ext_supported(const struct inode *sufile)
+{
+	return NILFS_MDT(sufile)->mi_entry_size >= NILFS_EXT_SEGMENT_USAGE_SIZE;
+}
 
 static inline unsigned long nilfs_sufile_get_nsegments(struct inode *sufile)
 {
@@ -142,5 +147,44 @@ static inline int nilfs_sufile_set_error(struct inode *sufile, __u64 segnum)
 	return nilfs_sufile_update(sufile, segnum, 0,
 				   nilfs_sufile_do_set_error);
 }
+
+#define NILFS_SUFILE_MC_SIZE_DEFAULT	5
+#define NILFS_SUFILE_MC_SIZE_EXT	10
+
+struct nilfs_sufile_mod {
+	__u64 m_segnum;
+	__s64 m_value;
+};
+
+struct nilfs_sufile_mod_cache {
+	size_t mc_size;
+	struct nilfs_sufile_mod *mc_mods;
+};
+
+static inline int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *mc,
+				       size_t size)
+{
+	mc->mc_size = size;
+	if (!size)
+		return -EINVAL;
+
+	mc->mc_mods = kzalloc(size * sizeof(struct nilfs_sufile_mod),
+			      GFP_KERNEL);
+	if (!mc->mc_mods)
+		return -ENOMEM;
+	return 0;
+}
+
+static inline void nilfs_sufile_mc_destroy(struct nilfs_sufile_mod_cache *mc)
+{
+	if (mc)
+		kfree(mc->mc_mods);
+}
+
+int nilfs_sufile_flush_nlive_blks(struct inode *sufile,
+				  struct nilfs_sufile_mod_cache *);
+int nilfs_sufile_mod_nlive_blks(struct inode *sufile,
+				struct nilfs_sufile_mod_cache *,
+				__u64, __s64);
 
 #endif	/* _NILFS_SUFILE_H */

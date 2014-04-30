@@ -79,6 +79,7 @@ struct nilfs_cstage {
 };
 
 struct nilfs_segment_buffer;
+struct nilfs_sufile_mod_cache;
 
 struct nilfs_segsum_pointer {
 	struct buffer_head     *bh;
@@ -180,6 +181,7 @@ struct nilfs_sc_info {
 
 	struct timer_list	sc_timer;
 	struct task_struct     *sc_task;
+	struct nilfs_sufile_mod_cache *sc_mc;
 };
 
 /* sc_flags */
