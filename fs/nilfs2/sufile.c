@@ -1188,113 +1188,147 @@ out_sem:
 
 static inline void nilfs_sufile_mc_clear(struct nilfs_sufile_mod_cache *mc)
 {
+	mc->mc_size = 0;
+}
+
+static inline int nilfs_sufile_mc_add(struct nilfs_sufile_mod_cache *mc,
+			       __u64 segnum, __s64 value)
+{
 	struct nilfs_sufile_mod *mods = mc->mc_mods;
 	int i;
 
-	for (i = 0; i < mc->mc_size; ++i, ++mods)
-		mods->m_value = 0;
-
-	mc->mc_dirty = false;
-}
-
-static int nilfs_sufile_mc_add(struct inode *sufile,
-			       struct nilfs_sufile_mod_cache *mc,
-			       __u64 segnum, __s64 value)
-{
-	struct nilfs_sufile_mod *mods;
-	unsigned long blkoff, prev_blkoff;
-	int i;
-
-	blkoff = nilfs_sufile_get_blkoff(sufile, segnum);
-	prev_blkoff = nilfs_sufile_get_blkoff(sufile, mc->mc_mods->m_segnum);
-
-	if (blkoff == prev_blkoff || !mc->mc_dirty) {
-		mods = mc->mc_mods;
-
-		for (i = 0; i < mc->mc_size; ++i, ++mods) {
-			if (mods->m_value == 0 ||
-			    mods->m_segnum == segnum) {
-				mods->m_segnum = segnum;
-				mods->m_value += value;
-				mc->mc_dirty = true;
-				return 0;
-			}
+	for (i = 0; i < mc->mc_size; ++i, ++mods) {
+		if (mods->m_segnum == segnum) {
+			mods->m_segnum = segnum;
+			mods->m_value += value;
+			return 0;
 		}
+	}
+
+	if (mc->mc_size < mc->mc_capacity) {
+		mods->m_segnum = segnum;
+		mods->m_value = value;
+		mc->mc_size++;
+		return 0;
 	}
 
 	return -ENOENT;
 }
 
-static int nilfs_sufile_do_flush_nlive_blks(struct inode *sufile,
-					    struct nilfs_sufile_mod *mods,
-					    int nmods)
+static int nilfs_sufile_mc_flush(struct inode *sufile,
+					struct nilfs_sufile_mod_cache *mc,
+					void (*dofunc)(struct inode *,
+						struct nilfs_sufile_mod *,
+						struct buffer_head *,
+						struct buffer_head *))
 {
-	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
-	struct buffer_head *bh;
-	struct nilfs_segment_usage *su;
-	void *kaddr;
-	__u32 nblocks, nlive_blocks;
-	__s64 value;
-	__u64 segnum;
-	unsigned long blkoff;
-	int i, ret, isdirty = 0;
+	struct buffer_head *header_bh, *bh;
+	struct nilfs_sufile_mod *modv = mc->mc_mods;
+	struct nilfs_sufile_mod *modvend = modv + mc->mc_size;
+	unsigned long blkoff, prev_blkoff;
+	int ret;
+
+	if (unlikely(!mc->mc_size))
+		return 0;
 
 	down_write(&NILFS_MDT(sufile)->mi_sem);
 
-	blkoff = nilfs_sufile_get_blkoff(sufile, mods->m_segnum);
-
-	ret = nilfs_sufile_get_segment_usage_block(sufile, mods->m_segnum,
-						   0, &bh);
+	ret = nilfs_sufile_get_header_block(sufile, &header_bh);
 	if (unlikely(ret < 0))
 		goto out_sem;
 
-	kaddr = kmap_atomic(bh->b_page);
+	blkoff = nilfs_sufile_get_blkoff(sufile, modv->m_segnum);
+	ret = nilfs_mdt_get_block(sufile, blkoff, 1, NULL, &bh);
+	if (unlikely(ret < 0))
+		goto out_header;
 
-	for (i = 0; i < nmods; ++i, ++mods) {
-		segnum = mods->m_segnum;
-		value = mods->m_value;
-		if (!value)
+	for (;;) {
+		dofunc(sufile, modv, header_bh, bh);
+
+		if (++modv >= modvend)
+			break;
+
+		prev_blkoff = blkoff;
+		blkoff = nilfs_sufile_get_blkoff(sufile, modv->m_segnum);
+		if (blkoff == prev_blkoff)
 			continue;
 
-		if (blkoff != nilfs_sufile_get_blkoff(sufile, segnum)) {
-			ret = -EINVAL;
-			goto out_unmap;
-		}
-
-		su = nilfs_sufile_block_get_segment_usage(sufile, segnum,
-							  bh, kaddr);
-		WARN_ON(nilfs_segment_usage_error(su));
-
-		nblocks = le32_to_cpu(su->su_nblocks);
-		nlive_blocks = le32_to_cpu(su->su_nlive_blks);
-
-		value += nlive_blocks;
-		if (value < 0)
-			value = 0;
-		else if (value > nblocks)
-			value = nblocks;
-
-		if (value == nlive_blocks)
-			continue;
-
-		su->su_nlive_blks = cpu_to_le32(value);
-		su->su_nlive_lastmod = cpu_to_le64(nilfs->ns_ctime);
-
-		isdirty = 1;
+		/* get different block */
+		put_bh(bh);
+		ret = nilfs_mdt_get_block(sufile, blkoff, 0, NULL, &bh);
+		if (unlikely(ret < 0))
+			goto out_header;
 	}
-
-out_unmap:
-	kunmap_atomic(kaddr);
-
-	if (isdirty) {
-		mark_buffer_dirty(bh);
-		nilfs_mdt_mark_dirty(sufile);
-	}
-
 	put_bh(bh);
+
+out_header:
+	put_bh(header_bh);
 out_sem:
 	up_write(&NILFS_MDT(sufile)->mi_sem);
 	return ret;
+}
+
+static inline int nilfs_sufile_mc_update(struct inode *sufile,
+					 __u64 segnum,
+					 __s64 value,
+					 void (*dofunc)(struct inode *,
+						struct nilfs_sufile_mod *,
+						struct buffer_head *,
+						struct buffer_head *))
+{
+	struct nilfs_sufile_mod_cache mc;
+	struct nilfs_sufile_mod m;
+
+	m.m_segnum = segnum;
+	m.m_value = value;
+	mc.mc_mods = &m;
+	mc.mc_size = 1;
+	mc.mc_capacity = 1;
+
+	return nilfs_sufile_mc_flush(sufile, &mc, dofunc);
+}
+
+static void nilfs_sufile_do_flush_nlive_blks(struct inode *sufile,
+					     struct nilfs_sufile_mod *mod,
+					     struct buffer_head *header_bh,
+					     struct buffer_head *su_bh)
+{
+	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
+	struct nilfs_segment_usage *su;
+	void *kaddr;
+	__u32 nblocks, nlive_blocks;
+	__u64 segnum = mod->m_segnum;
+	__s64 value = mod->m_value;
+
+	if (!value)
+		return;
+
+	kaddr = kmap_atomic(su_bh->b_page);
+
+	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, su_bh, kaddr);
+	WARN_ON(nilfs_segment_usage_error(su));
+
+	nblocks = le32_to_cpu(su->su_nblocks);
+	nlive_blocks = le32_to_cpu(su->su_nlive_blks);
+
+	value += nlive_blocks;
+	if (value < 0)
+		value = 0;
+	else if (value > nblocks)
+		value = nblocks;
+
+	/* do nothing if the value didn't change */
+	if (value != nlive_blocks) {
+		su->su_nlive_blks = cpu_to_le32(value);
+		su->su_nlive_lastmod = cpu_to_le64(nilfs->ns_ctime);
+	}
+
+	kunmap_atomic(kaddr);
+
+	if (value != nlive_blocks) {
+		mark_buffer_dirty(su_bh);
+		nilfs_mdt_mark_dirty(sufile);
+	}
 }
 
 int nilfs_sufile_flush_nlive_blks(struct inode *sufile,
@@ -1302,13 +1336,11 @@ int nilfs_sufile_flush_nlive_blks(struct inode *sufile,
 {
 	int ret;
 
-	if (!mc || !nilfs_sufile_ext_supported(sufile) ||
-	    !mc->mc_dirty)
+	if (!mc || !nilfs_sufile_ext_supported(sufile) || !mc->mc_size)
 		return 0;
 
-	ret = nilfs_sufile_do_flush_nlive_blks(sufile,
-					       mc->mc_mods,
-					       mc->mc_size);
+	ret = nilfs_sufile_mc_flush(sufile, mc,
+				    nilfs_sufile_do_flush_nlive_blks);
 
 	nilfs_sufile_mc_clear(mc);
 
@@ -1319,26 +1351,21 @@ int nilfs_sufile_mod_nlive_blks(struct inode *sufile,
 				struct nilfs_sufile_mod_cache *mc,
 				__u64 segnum, __s64 value)
 {
-	struct nilfs_sufile_mod m;
 	int ret;
 
 	if (value == 0 || !nilfs_sufile_ext_supported(sufile))
 		return 0;
 
-	if (!mc) {
-		m.m_segnum = segnum;
-		m.m_value = value;
-		return nilfs_sufile_do_flush_nlive_blks(sufile, &m, 1);
-	}
+	if (!mc)
+		return nilfs_sufile_mc_update(sufile, segnum, value,
+				nilfs_sufile_do_flush_nlive_blks);
 
-	if (!nilfs_sufile_mc_add(sufile, mc, segnum, value))
+	if (!nilfs_sufile_mc_add(mc, segnum, value))
 		return 0;
 
 	ret = nilfs_sufile_flush_nlive_blks(sufile, mc);
 
-	mc->mc_mods->m_segnum = segnum;
-	mc->mc_mods->m_value = value;
-	mc->mc_dirty = true;
+	nilfs_sufile_mc_add(mc, segnum, value);
 
 	return ret;
 }

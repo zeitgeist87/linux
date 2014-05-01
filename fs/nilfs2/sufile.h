@@ -158,23 +158,23 @@ struct nilfs_sufile_mod {
 
 struct nilfs_sufile_mod_cache {
 	struct nilfs_sufile_mod *mc_mods;
+	size_t mc_capacity;
 	size_t mc_size;
-	bool mc_dirty;
 };
 
 static inline int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *mc,
-				       size_t size)
+				       size_t capacity)
 {
-	mc->mc_size = size;
-	if (!size)
+	mc->mc_capacity = capacity;
+	if (!capacity)
 		return -EINVAL;
 
-	mc->mc_mods = kzalloc(size * sizeof(struct nilfs_sufile_mod),
+	mc->mc_mods = kzalloc(capacity * sizeof(struct nilfs_sufile_mod),
 			      GFP_KERNEL);
 	if (!mc->mc_mods)
 		return -ENOMEM;
 
-	mc->mc_dirty = false;
+	mc->mc_size = 0;
 
 	return 0;
 }
