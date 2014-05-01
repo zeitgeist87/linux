@@ -1363,9 +1363,10 @@ static void nilfs_free_incomplete_logs(struct list_head *logs,
 }
 
 static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
-					  struct inode *sufile)
+					  struct the_nilfs *nilfs)
 {
 	struct nilfs_segment_buffer *segbuf;
+	struct inode *sufile = nilfs->ns_sufile;
 	unsigned long live_blocks;
 	int ret;
 
@@ -1381,16 +1382,18 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 		segbuf->sb_nlive_blks_added = segbuf->sb_nlive_blks_diff +
 					      segbuf->sb_sum.nfileblk;
 
-		ret = nilfs_sufile_mod_nlive_blks(sufile, sci->sc_mc,
-						   segbuf->sb_segnum,
-						   segbuf->sb_nlive_blks_added);
-		WARN_ON(ret); /* always succeed because the segusage is dirty */
+		if (nilfs_feature_track_live_blks(nilfs))
+			nilfs_sufile_mod_nlive_blks(sufile, sci->sc_mc,
+						segbuf->sb_segnum,
+						segbuf->sb_nlive_blks_added);
 	}
 }
 
-static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
+static void nilfs_cancel_segusage(struct list_head *logs,
+				  struct the_nilfs *nilfs)
 {
 	struct nilfs_segment_buffer *segbuf;
+	struct inode *sufile = nilfs->ns_sufile;
 	int ret;
 
 	segbuf = NILFS_FIRST_SEGBUF(logs);
@@ -1400,9 +1403,9 @@ static void nilfs_cancel_segusage(struct list_head *logs, struct inode *sufile)
 					     segbuf->sb_fseg_start, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
 
-	ret = nilfs_sufile_mod_nlive_blks(sufile, NULL, segbuf->sb_segnum,
-					   -(segbuf->sb_nlive_blks_added));
-	WARN_ON(ret); /* always succeed */
+	if (nilfs_feature_track_live_blks(nilfs))
+		nilfs_sufile_mod_nlive_blks(sufile, NULL, segbuf->sb_segnum,
+					-((__s64)segbuf->sb_nlive_blks_added));
 
 	segbuf->sb_nlive_blks_added = 0;
 
@@ -1772,7 +1775,7 @@ static void nilfs_segctor_abort_construction(struct nilfs_sc_info *sci,
 	nilfs_abort_logs(&logs, ret ? : err);
 
 	list_splice_tail_init(&sci->sc_segbufs, &logs);
-	nilfs_cancel_segusage(&logs, nilfs->ns_sufile);
+	nilfs_cancel_segusage(&logs, nilfs);
 	nilfs_free_incomplete_logs(&logs, nilfs);
 
 	if (sci->sc_stage.flags & NILFS_CF_SUFREED) {
@@ -2022,7 +2025,7 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int mode)
 
 			nilfs_segctor_fill_in_super_root(sci, nilfs);
 		}
-		nilfs_segctor_update_segusage(sci, nilfs->ns_sufile);
+		nilfs_segctor_update_segusage(sci, nilfs);
 
 		nilfs_sufile_flush_nlive_blks(nilfs->ns_sufile,
 					      sci->sc_mc);
