@@ -1501,8 +1501,7 @@ static int nilfs_segctor_mod_nlive_blks(struct the_nilfs *nilfs,
 	__u64 segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 	int ret = 0;
 
-	if (!nilfs_sufile_ext_supported(nilfs->ns_sufile) ||
-	    segnum >= nilfs->ns_nsegments)
+	if (segnum >= nilfs->ns_nsegments)
 		return 0;
 
 	if (segnum == segbuf->sb_segnum)

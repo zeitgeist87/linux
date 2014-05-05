@@ -1186,49 +1186,20 @@ out_sem:
 	return ret;
 }
 
-static inline void nilfs_sufile_mc_clear(struct nilfs_sufile_mod_cache *mc)
-{
-	mc->mc_size = 0;
-}
-
-static inline int nilfs_sufile_mc_add(struct nilfs_sufile_mod_cache *mc,
-			       __u64 segnum, __s64 value)
-{
-	struct nilfs_sufile_mod *mods = mc->mc_mods;
-	int i;
-
-	for (i = 0; i < mc->mc_size; ++i, ++mods) {
-		if (mods->m_segnum == segnum) {
-			mods->m_segnum = segnum;
-			mods->m_value += value;
-			return 0;
-		}
-	}
-
-	if (mc->mc_size < mc->mc_capacity) {
-		mods->m_segnum = segnum;
-		mods->m_value = value;
-		mc->mc_size++;
-		return 0;
-	}
-
-	return -ENOENT;
-}
-
-static int nilfs_sufile_mc_flush(struct inode *sufile,
-					struct nilfs_sufile_mod_cache *mc,
-					void (*dofunc)(struct inode *,
-						struct nilfs_sufile_mod *,
-						struct buffer_head *,
-						struct buffer_head *))
+int nilfs_sufile_data_updatev(struct inode *sufile, void *datav, size_t datasz,
+			      size_t segoff, size_t ndata,
+			      void (*dofunc)(struct inode *,
+					     void *,
+					     struct buffer_head *,
+					     struct buffer_head *))
 {
 	struct buffer_head *header_bh, *bh;
-	struct nilfs_sufile_mod *modv = mc->mc_mods;
-	struct nilfs_sufile_mod *modvend = modv + mc->mc_size;
+	void *datavend = datav + datasz * ndata;
+	__u64 *seg;
 	unsigned long blkoff, prev_blkoff;
 	int ret;
 
-	if (unlikely(!mc->mc_size))
+	if (unlikely(!ndata))
 		return 0;
 
 	down_write(&NILFS_MDT(sufile)->mi_sem);
@@ -1237,19 +1208,22 @@ static int nilfs_sufile_mc_flush(struct inode *sufile,
 	if (unlikely(ret < 0))
 		goto out_sem;
 
-	blkoff = nilfs_sufile_get_blkoff(sufile, modv->m_segnum);
+	seg = datav + segoff;
+	blkoff = nilfs_sufile_get_blkoff(sufile, *seg);
 	ret = nilfs_mdt_get_block(sufile, blkoff, 1, NULL, &bh);
 	if (unlikely(ret < 0))
 		goto out_header;
 
 	for (;;) {
-		dofunc(sufile, modv, header_bh, bh);
+		dofunc(sufile, datav, header_bh, bh);
 
-		if (++modv >= modvend)
+		datav += datasz;
+		if (datav >= datavend)
 			break;
 
+		seg = datav + segoff;
 		prev_blkoff = blkoff;
-		blkoff = nilfs_sufile_get_blkoff(sufile, modv->m_segnum);
+		blkoff = nilfs_sufile_get_blkoff(sufile, *seg);
 		if (blkoff == prev_blkoff)
 			continue;
 
@@ -1336,7 +1310,7 @@ int nilfs_sufile_flush_nlive_blks(struct inode *sufile,
 {
 	int ret;
 
-	if (!mc || !nilfs_sufile_ext_supported(sufile) || !mc->mc_size)
+	if (!mc || !mc->mc_size || !nilfs_sufile_ext_supported(sufile))
 		return 0;
 
 	ret = nilfs_sufile_mc_flush(sufile, mc,

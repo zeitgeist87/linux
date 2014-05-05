@@ -280,8 +280,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
 					     req->pr_entry_bh, kaddr);
-	decremented = nilfs_dat_entry_is_dec(entry) &&
-			le64_to_cpu(entry->de_end) == nilfs_mdt_cno(dat);
+	decremented = nilfs_dat_entry_is_dec(entry);
 	end = start = le64_to_cpu(entry->de_start);
 	if (!dead) {
 		end = nilfs_mdt_cno(dat);
