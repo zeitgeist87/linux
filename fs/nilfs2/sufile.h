@@ -202,8 +202,7 @@ static inline int nilfs_sufile_mc_flush(struct inode *sufile,
 	return nilfs_sufile_data_updatev(sufile, mc->mc_mods,
 				sizeof(struct nilfs_sufile_mod),
 				offsetof(struct nilfs_sufile_mod, m_segnum),
-				mc->mc_size,
-				(void *)dofunc);
+				mc->mc_size, (void *)dofunc);
 }
 
 static inline int nilfs_sufile_mc_update(struct inode *sufile,
