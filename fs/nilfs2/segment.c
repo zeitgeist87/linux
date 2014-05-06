@@ -1493,24 +1493,60 @@ static void nilfs_list_replace_buffer(struct buffer_head *old_bh,
 	/* The caller must release old_bh */
 }
 
-static int nilfs_segctor_mod_nlive_blks(struct the_nilfs *nilfs,
-					struct nilfs_sufile_mod_cache *mc,
-					struct nilfs_segment_buffer *segbuf,
-					sector_t blocknr)
+/**
+ * nilfs_segctor_mod_nlive_blks_gc - adjust nblocks for the current segment
+ * @dat: dat inode
+ * @segbuf: currtent segment buffer
+ * @bh: current buffer head
+ *
+ * Description: nilfs_segctor_mod_nlive_blks_gc() is called if the inode to
+ * which
+ * @bh belongs is a GC-Inode. In that case it is not necessary to decrement
+ * the previous segment, because at the end of the GC process it will be
+ * freed anyway. It is however necessary to correct the nblocks count
+ * of the current segment for blocks, that were copied because of the
+ * protection period. It is assumed, that @bh->b_blocknr contains a virtual
+ * block number, which is only true if @bh is part of a GC-Inode.
+ */
+static void nilfs_segctor_mod_nlive_blks_gc(struct inode *dat,
+					    struct nilfs_segment_buffer *segbuf,
+					    struct buffer_head *bh) {
+	bool isdead = buffer_nilfs_protection_period(bh) ||
+			!nilfs_dat_is_live(dat, bh->b_blocknr, NULL);
+
+	if (!buffer_nilfs_snapshot(bh) && isdead)
+		segbuf->sb_nlive_blks_diff--;
+}
+
+static void nilfs_segctor_mod_nlive_blks_nogc(struct the_nilfs *nilfs,
+					      struct nilfs_sufile_mod_cache *mc,
+					      struct nilfs_segment_buffer *sb,
+					      sector_t blocknr)
 {
 	__u64 segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
-	int ret = 0;
 
 	if (segnum >= nilfs->ns_nsegments)
-		return 0;
+		return;
 
-	if (segnum == segbuf->sb_segnum)
-		segbuf->sb_nlive_blks_diff--;
+	if (segnum == sb->sb_segnum)
+		sb->sb_nlive_blks_diff--;
 	else
-		ret = nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile, mc,
-						  segnum, -1);
+		nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile, mc, segnum, -1);
+}
 
-	return ret;
+static void nilfs_segctor_mod_nlive_blks(struct the_nilfs *nilfs,
+					 struct nilfs_sufile_mod_cache *mc,
+					 struct nilfs_segment_buffer *sb,
+					 struct buffer_head *bh,
+					 ino_t ino,
+					 bool gc_inode)
+{
+	bool isnode = buffer_nilfs_node(bh);
+
+	if (gc_inode)
+		nilfs_segctor_mod_nlive_blks_gc(nilfs->ns_dat, sb, bh);
+	else if (ino == NILFS_DAT_INO || (ino == NILFS_SUFILE_INO && !isnode))
+		nilfs_segctor_mod_nlive_blks_nogc(nilfs, mc, sb, bh->b_blocknr);
 }
 
 static int
@@ -1520,6 +1556,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 {
 	struct the_nilfs *nilfs = sci->sc_super->s_fs_info;
 	struct inode *inode = NULL;
+	struct nilfs_inode_info *ii;
 	sector_t blocknr;
 	unsigned long nfinfo = segbuf->sb_sum.nfinfo;
 	unsigned long nblocks = 0, ndatablk = 0;
@@ -1529,7 +1566,7 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	union nilfs_binfo binfo;
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
-	int err = 0, track_live_blks;
+	int err = 0, gc_inode = 0, track_live_blks;
 
 	track_live_blks = nilfs_feature_track_live_blks(nilfs);
 
@@ -1552,6 +1589,9 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 			inode = bh->b_page->mapping->host;
 
+			ii = NILFS_I(inode);
+			gc_inode = test_bit(NILFS_I_GCINODE, &ii->i_state);
+
 			if (mode == SC_LSEG_DSYNC)
 				sc_op = &nilfs_sc_dsync_ops;
 			else if (ino == NILFS_DAT_INO)
@@ -1560,10 +1600,9 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				sc_op = &nilfs_sc_file_ops;
 		}
 
-		if (track_live_blks && (ino == NILFS_DAT_INO ||
-		    (ino == NILFS_SUFILE_INO && !buffer_nilfs_node(bh))))
+		if (track_live_blks)
 			nilfs_segctor_mod_nlive_blks(nilfs, sci->sc_mc,
-						     segbuf, bh->b_blocknr);
+						     segbuf, bh, ino, gc_inode);
 
 		bh_org = bh;
 		get_bh(bh_org);

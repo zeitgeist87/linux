@@ -1242,24 +1242,43 @@ out_sem:
 	return ret;
 }
 
-static inline int nilfs_sufile_mc_update(struct inode *sufile,
-					 __u64 segnum,
-					 __s64 value,
-					 void (*dofunc)(struct inode *,
-						struct nilfs_sufile_mod *,
-						struct buffer_head *,
-						struct buffer_head *))
+int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *mc, size_t capacity)
 {
-	struct nilfs_sufile_mod_cache mc;
-	struct nilfs_sufile_mod m;
+	mc->mc_capacity = capacity;
+	if (!capacity)
+		return -EINVAL;
 
-	m.m_segnum = segnum;
-	m.m_value = value;
-	mc.mc_mods = &m;
-	mc.mc_size = 1;
-	mc.mc_capacity = 1;
+	mc->mc_mods = kmalloc(capacity * sizeof(struct nilfs_sufile_mod),
+			      GFP_KERNEL);
+	if (!mc->mc_mods)
+		return -ENOMEM;
 
-	return nilfs_sufile_mc_flush(sufile, &mc, dofunc);
+	mc->mc_size = 0;
+
+	return 0;
+}
+
+int nilfs_sufile_mc_add(struct nilfs_sufile_mod_cache *mc, __u64 segnum,
+			__s64 value)
+{
+	struct nilfs_sufile_mod *mods = mc->mc_mods;
+	int i;
+
+	for (i = 0; i < mc->mc_size; ++i, ++mods) {
+		if (mods->m_segnum == segnum) {
+			mods->m_value += value;
+			return 0;
+		}
+	}
+
+	if (mc->mc_size < mc->mc_capacity) {
+		mods->m_segnum = segnum;
+		mods->m_value = value;
+		mc->mc_size++;
+		return 0;
+	}
+
+	return -ENOENT;
 }
 
 static void nilfs_sufile_do_flush_nlive_blks(struct inode *sufile,
