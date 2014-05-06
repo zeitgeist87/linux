@@ -1358,7 +1358,7 @@ int nilfs_sufile_mod_nlive_blks(struct inode *sufile,
 
 	ret = nilfs_sufile_flush_nlive_blks(sufile, mc);
 
-	nilfs_sufile_mc_add(mc, segnum, value);
+	nilfs_sufile_mc_reset(mc, segnum, value);
 
 	return ret;
 }

@@ -168,7 +168,7 @@ struct nilfs_sufile_mod_cache {
 	size_t mc_size;
 };
 
-int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *mc, size_t capacity);
+int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *, size_t);
 int nilfs_sufile_mc_add(struct nilfs_sufile_mod_cache *, __u64, __s64);
 
 static inline void nilfs_sufile_mc_destroy(struct nilfs_sufile_mod_cache *mc)
@@ -180,6 +180,16 @@ static inline void nilfs_sufile_mc_destroy(struct nilfs_sufile_mod_cache *mc)
 static inline void nilfs_sufile_mc_clear(struct nilfs_sufile_mod_cache *mc)
 {
 	mc->mc_size = 0;
+}
+
+static inline void nilfs_sufile_mc_reset(struct nilfs_sufile_mod_cache *mc,
+					 __u64 segnum, __s64 value)
+{
+	struct nilfs_sufile_mod *mods = mc->mc_mods;
+
+	mods->m_segnum = segnum;
+	mods->m_value = value;
+	mc->mc_size = 1;
 }
 
 static inline int nilfs_sufile_mc_flush(struct inode *sufile,
@@ -197,17 +207,13 @@ static inline int nilfs_sufile_mc_flush(struct inode *sufile,
 }
 
 static inline int nilfs_sufile_mc_update(struct inode *sufile,
-					 __u64 segnum,
-					 __s64 value,
+					 __u64 segnum, __s64 value,
 					 void (*dofunc)(struct inode *,
 						struct nilfs_sufile_mod *,
 						struct buffer_head *,
 						struct buffer_head *))
 {
-	struct nilfs_sufile_mod m;
-
-	m.m_segnum = segnum;
-	m.m_value = value;
+	struct nilfs_sufile_mod m = {.m_segnum = segnum, .m_value = value};
 
 	return nilfs_sufile_data_updatev(sufile, &m,
 				sizeof(struct nilfs_sufile_mod),
