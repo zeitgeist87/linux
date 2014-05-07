@@ -46,21 +46,21 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *, __u64, void *, unsigned,
 				size_t);
 ssize_t nilfs_sufile_set_suinfo(struct inode *, void *, unsigned , size_t);
 
-int nilfs_sufile_updatev(struct inode *, __u64 *, size_t, int, size_t *,
-			 void (*dofunc)(struct inode *, __u64,
-					struct buffer_head *,
-					struct buffer_head *));
-int nilfs_sufile_update(struct inode *, __u64, int,
-			void (*dofunc)(struct inode *, __u64,
+int nilfs_sufile_updatev(struct inode *, void *, size_t, size_t, size_t, int,
+			 size_t *, void (*dofunc)(struct inode *, void *,
+						  struct buffer_head *,
+						  struct buffer_head *));
+int nilfs_sufile_update(struct inode *, void *, size_t, int,
+			void (*dofunc)(struct inode *, void *,
 				       struct buffer_head *,
 				       struct buffer_head *));
-void nilfs_sufile_do_scrap(struct inode *, __u64, struct buffer_head *,
+void nilfs_sufile_do_scrap(struct inode *, __u64 *, struct buffer_head *,
 			   struct buffer_head *);
-void nilfs_sufile_do_free(struct inode *, __u64, struct buffer_head *,
+void nilfs_sufile_do_free(struct inode *, __u64 *, struct buffer_head *,
 			  struct buffer_head *);
-void nilfs_sufile_do_cancel_free(struct inode *, __u64, struct buffer_head *,
+void nilfs_sufile_do_cancel_free(struct inode *, __u64 *, struct buffer_head *,
 				 struct buffer_head *);
-void nilfs_sufile_do_set_error(struct inode *, __u64, struct buffer_head *,
+void nilfs_sufile_do_set_error(struct inode *, __u64 *, struct buffer_head *,
 			       struct buffer_head *);
 
 int nilfs_sufile_resize(struct inode *sufile, __u64 newnsegs);
@@ -75,7 +75,8 @@ int nilfs_sufile_trim_fs(struct inode *sufile, struct fstrim_range *range);
  */
 static inline int nilfs_sufile_scrap(struct inode *sufile, __u64 segnum)
 {
-	return nilfs_sufile_update(sufile, segnum, 1, nilfs_sufile_do_scrap);
+	return nilfs_sufile_update(sufile, &segnum, 0, 1,
+				   (void *)nilfs_sufile_do_scrap);
 }
 
 /**
@@ -85,7 +86,8 @@ static inline int nilfs_sufile_scrap(struct inode *sufile, __u64 segnum)
  */
 static inline int nilfs_sufile_free(struct inode *sufile, __u64 segnum)
 {
-	return nilfs_sufile_update(sufile, segnum, 0, nilfs_sufile_do_free);
+	return nilfs_sufile_update(sufile, &segnum, 0, 0,
+				   (void *)nilfs_sufile_do_free);
 }
 
 /**
@@ -98,8 +100,8 @@ static inline int nilfs_sufile_free(struct inode *sufile, __u64 segnum)
 static inline int nilfs_sufile_freev(struct inode *sufile, __u64 *segnumv,
 				     size_t nsegs, size_t *ndone)
 {
-	return nilfs_sufile_updatev(sufile, segnumv, nsegs, 0, ndone,
-				    nilfs_sufile_do_free);
+	return nilfs_sufile_updatev(sufile, segnumv, sizeof(__u64), 0, nsegs,
+				    0, ndone, (void *)nilfs_sufile_do_free);
 }
 
 /**
@@ -116,8 +118,9 @@ static inline int nilfs_sufile_cancel_freev(struct inode *sufile,
 					    __u64 *segnumv, size_t nsegs,
 					    size_t *ndone)
 {
-	return nilfs_sufile_updatev(sufile, segnumv, nsegs, 0, ndone,
-				    nilfs_sufile_do_cancel_free);
+	return nilfs_sufile_updatev(sufile, segnumv, sizeof(__u64), 0, nsegs,
+				    0, ndone,
+				    (void *)nilfs_sufile_do_cancel_free);
 }
 
 /**
@@ -139,8 +142,8 @@ static inline int nilfs_sufile_cancel_freev(struct inode *sufile,
  */
 static inline int nilfs_sufile_set_error(struct inode *sufile, __u64 segnum)
 {
-	return nilfs_sufile_update(sufile, segnum, 0,
-				   nilfs_sufile_do_set_error);
+	return nilfs_sufile_update(sufile, &segnum, 0, 0,
+				   (void *)nilfs_sufile_do_set_error);
 }
 
 #endif	/* _NILFS_SUFILE_H */
