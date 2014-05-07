@@ -146,4 +146,48 @@ static inline int nilfs_sufile_set_error(struct inode *sufile, __u64 segnum)
 				   (void *)nilfs_sufile_do_set_error);
 }
 
+#define NILFS_SUFILE_MC_SIZE_DEFAULT	5
+#define NILFS_SUFILE_MC_SIZE_EXT	10
+
+/**
+ * struct nilfs_sufile_mod - segment usage modification
+ * @m_segnum: segment number
+ * @m_value: signed value that gets added to respective segusg field
+ */
+struct nilfs_sufile_mod {
+	__u64 m_segnum;
+	__s64 m_value;
+};
+
+/**
+ * struct nilfs_sufile_mod_cache - segment usage modification cache
+ * @mc_mods: array of modifications to segments
+ * @mc_capacity: maximum number of elements that fit in @mc_mods
+ * @mc_size: number of elements currently filled with valid data
+ */
+struct nilfs_sufile_mod_cache {
+	struct nilfs_sufile_mod *mc_mods;
+	size_t mc_capacity;
+	size_t mc_size;
+};
+
+int nilfs_sufile_mc_init(struct nilfs_sufile_mod_cache *, size_t);
+
+/**
+ * nilfs_sufile_mc_destroy - destroy segusg modification cache
+ * @mc: modification cache
+ *
+ * Description: Releases the memory allocated by nilfs_sufile_mc_init and
+ * sets the size and capacity to 0. @mc should not be used after a call to
+ * this function.
+ */
+static inline void nilfs_sufile_mc_destroy(struct nilfs_sufile_mod_cache *mc)
+{
+	if (mc) {
+		kfree(mc->mc_mods);
+		mc->mc_capacity = 0;
+		mc->mc_size = 0;
+	}
+}
+
 #endif	/* _NILFS_SUFILE_H */
