@@ -28,6 +28,11 @@
 #include <linux/nilfs2_fs.h>
 #include "mdt.h"
 
+static inline int
+nilfs_sufile_ext_supported(const struct inode *sufile)
+{
+	return NILFS_MDT(sufile)->mi_entry_size >= NILFS_EXT_SEGMENT_USAGE_SIZE;
+}
 
 static inline unsigned long nilfs_sufile_get_nsegments(struct inode *sufile)
 {
