@@ -1851,7 +1851,9 @@ static void nilfs_btree_commit_update_v(struct nilfs_bmap *btree,
 
 	nilfs_dat_commit_update(dat, &path[level].bp_oldreq.bpr_req,
 				&path[level].bp_newreq.bpr_req,
-				btree->b_ptr_type == NILFS_BMAP_PTR_VS);
+				NULL,
+				btree->b_ptr_type == NILFS_BMAP_PTR_VS,
+				btree->b_inode->i_ino != NILFS_SUFILE_INO);
 
 	if (buffer_nilfs_node(path[level].bp_bh)) {
 		nilfs_btnode_commit_change_key(
