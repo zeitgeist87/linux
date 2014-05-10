@@ -195,4 +195,9 @@ static inline void nilfs_sufile_mc_destroy(struct nilfs_sufile_mod_cache *mc)
 	}
 }
 
+int nilfs_sufile_flush_nlive_blks(struct inode *,
+				  struct nilfs_sufile_mod_cache *);
+int nilfs_sufile_mod_nlive_blks(struct inode *, struct nilfs_sufile_mod_cache *,
+				__u64, __s64);
+
 #endif	/* _NILFS_SUFILE_H */
