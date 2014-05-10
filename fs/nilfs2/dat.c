@@ -28,6 +28,7 @@
 #include "mdt.h"
 #include "alloc.h"
 #include "dat.h"
+#include "sufile.h"
 
 
 #define NILFS_CNO_MIN	((__u64)1)
@@ -185,12 +186,14 @@ int nilfs_dat_prepare_end(struct inode *dat, struct nilfs_palloc_req *req)
 }
 
 void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
-			  int dead)
+			  struct nilfs_sufile_mod_cache *mc,
+			  int dead, int count_blocks)
 {
 	struct nilfs_dat_entry *entry;
-	__u64 start, end;
+	__u64 start, end, segnum;
 	sector_t blocknr;
 	void *kaddr;
+	struct the_nilfs *nilfs;
 
 	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
@@ -206,8 +209,18 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 
 	if (blocknr == 0)
 		nilfs_dat_commit_free(dat, req);
-	else
+	else {
 		nilfs_dat_commit_entry(dat, req);
+
+		nilfs = dat->i_sb->s_fs_info;
+
+		if (count_blocks && nilfs_feature_track_live_blks(nilfs)) {
+			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
+
+			nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile, mc,
+						    segnum, -1);
+		}
+	}
 }
 
 void nilfs_dat_abort_end(struct inode *dat, struct nilfs_palloc_req *req)
@@ -246,9 +259,11 @@ int nilfs_dat_prepare_update(struct inode *dat,
 
 void nilfs_dat_commit_update(struct inode *dat,
 			     struct nilfs_palloc_req *oldreq,
-			     struct nilfs_palloc_req *newreq, int dead)
+			     struct nilfs_palloc_req *newreq,
+			     struct nilfs_sufile_mod_cache *mc,
+			     int dead, int count_blocks)
 {
-	nilfs_dat_commit_end(dat, oldreq, dead);
+	nilfs_dat_commit_end(dat, oldreq, mc, dead, count_blocks);
 	nilfs_dat_commit_alloc(dat, newreq);
 }
 

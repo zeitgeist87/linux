@@ -467,6 +467,7 @@ __u64 nilfs_bmap_find_target_in_group(const struct nilfs_bmap *bmap)
 
 static struct lock_class_key nilfs_bmap_dat_lock_key;
 static struct lock_class_key nilfs_bmap_mdt_lock_key;
+static struct lock_class_key nilfs_bmap_sufile_lock_key;
 
 /**
  * nilfs_bmap_read - read a bmap from an inode
@@ -498,11 +499,16 @@ int nilfs_bmap_read(struct nilfs_bmap *bmap, struct nilfs_inode *raw_inode)
 		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_dat_lock_key);
 		break;
 	case NILFS_CPFILE_INO:
-	case NILFS_SUFILE_INO:
 		bmap->b_ptr_type = NILFS_BMAP_PTR_VS;
 		bmap->b_last_allocated_key = 0;
 		bmap->b_last_allocated_ptr = NILFS_BMAP_INVALID_PTR;
 		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_mdt_lock_key);
+		break;
+	case NILFS_SUFILE_INO:
+		bmap->b_ptr_type = NILFS_BMAP_PTR_VS;
+		bmap->b_last_allocated_key = 0;
+		bmap->b_last_allocated_ptr = NILFS_BMAP_INVALID_PTR;
+		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_sufile_lock_key);
 		break;
 	case NILFS_IFILE_INO:
 		lockdep_set_class(&bmap->b_sem, &nilfs_bmap_mdt_lock_key);

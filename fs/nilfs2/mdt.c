@@ -414,7 +414,7 @@ static const struct address_space_operations def_mdt_aops = {
 
 static const struct inode_operations def_mdt_iops;
 static const struct file_operations def_mdt_fops;
-
+static struct lock_class_key nilfs_mdt_mi_sufile_lock_key;
 
 int nilfs_mdt_init(struct inode *inode, gfp_t gfp_mask, size_t objsz)
 {
@@ -426,6 +426,9 @@ int nilfs_mdt_init(struct inode *inode, gfp_t gfp_mask, size_t objsz)
 
 	init_rwsem(&mi->mi_sem);
 	inode->i_private = mi;
+
+	if (inode->i_ino == NILFS_SUFILE_INO)
+		lockdep_set_class(&mi->mi_sem, &nilfs_mdt_mi_sufile_lock_key);
 
 	inode->i_mode = S_IFREG;
 	mapping_set_gfp_mask(inode->i_mapping, gfp_mask);
