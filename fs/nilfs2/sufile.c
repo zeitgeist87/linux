@@ -1380,6 +1380,144 @@ static inline int nilfs_sufile_mc_update(struct inode *sufile,
 }
 
 /**
+ * nilfs_sufile_do_flush_nlive_blks - apply modification to su_nlive_blks
+ * @sufile: inode of segment usage file
+ * @mod: modification structure
+ * @header_bh: sufile header block
+ * @su_bh: block containing segment usage of m_segnum in @mod
+ *
+ * Description: nilfs_sufile_do_flush_nlive_blks() is a callback function
+ * used with nilfs_sufile_updatev(), that adds m_value in @mod to
+ * the su_nlive_blks field of the segment usage entry belonging to m_segnum.
+ */
+static void nilfs_sufile_do_flush_nlive_blks(struct inode *sufile,
+					     struct nilfs_sufile_mod *mod,
+					     struct buffer_head *header_bh,
+					     struct buffer_head *su_bh)
+{
+	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
+	struct nilfs_segment_usage *su;
+	void *kaddr;
+	__u32 nblocks, nlive_blocks;
+	__u64 segnum = mod->m_segnum;
+	__s64 value = mod->m_value;
+
+	if (!value)
+		return;
+
+	kaddr = kmap_atomic(su_bh->b_page);
+
+	su = nilfs_sufile_block_get_segment_usage(sufile, segnum, su_bh, kaddr);
+	WARN_ON(nilfs_segment_usage_error(su));
+
+	nblocks = le32_to_cpu(su->su_nblocks);
+	nlive_blocks = le32_to_cpu(su->su_nlive_blks);
+
+	value += nlive_blocks;
+	if (value < 0)
+		value = 0;
+	else if (value > nblocks)
+		value = nblocks;
+
+	/* do nothing if the value didn't change */
+	if (value != nlive_blocks) {
+		su->su_nlive_blks = cpu_to_le32(value);
+		su->su_nlive_lastmod = cpu_to_le64(nilfs->ns_ctime);
+	}
+
+	kunmap_atomic(kaddr);
+
+	if (value != nlive_blocks) {
+		mark_buffer_dirty(su_bh);
+		nilfs_mdt_mark_dirty(sufile);
+	}
+}
+
+/**
+ * nilfs_sufile_flush_nlive_blks - flush mod cache to su_nlive_blks
+ * @sufile: inode of segment usage file
+ * @mc: modification cache
+ *
+ * Description: nilfs_sufile_flush_nlive_blks() flushes the cached
+ * modifications in @mc, by applying them to the su_nlive_blks field of
+ * the corresponding segment usage entries. @mc can be NULL or empty. If
+ * the sufile extension needed to support su_nlive_blks is not supported the
+ * function will abort without error.
+ *
+ * Return Value: On success, zero is returned.  On error, one of the
+ * following negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ *
+ * %-ENOENT - Given segment usage is in hole block
+ *
+ * %-EINVAL - Invalid segment usage number
+ */
+int nilfs_sufile_flush_nlive_blks(struct inode *sufile,
+				  struct nilfs_sufile_mod_cache *mc)
+{
+	int ret;
+
+	if (!mc || !mc->mc_size || !nilfs_sufile_ext_supported(sufile))
+		return 0;
+
+	ret = nilfs_sufile_mc_flush(sufile, mc,
+				    nilfs_sufile_do_flush_nlive_blks);
+
+	nilfs_sufile_mc_clear(mc);
+
+	return ret;
+}
+
+/**
+ * nilfs_sufile_mod_nlive_blks - modifiy su_nlive_blks using mod cache
+ * @sufile: inode of segment usage file
+ * @mc: modification cache
+ * @segnum: segment number
+ * @value: signed value (can be positive and negative)
+ *
+ * Description: nilfs_sufile_mod_nlive_blks() adds @value to the su_nlive_blks
+ * field of the segment usage entry for @segnum. If @mc is not NULL it first
+ * accumulates all modifications in the cache and flushes it if it is full.
+ * Otherwise the change is applied directly.
+ *
+ * Return Value: On success, zero is returned.  On error, one of the
+ * following negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ *
+ * %-ENOENT - Given segment usage is in hole block
+ *
+ * %-EINVAL - Invalid segment usage number
+ */
+int nilfs_sufile_mod_nlive_blks(struct inode *sufile,
+				struct nilfs_sufile_mod_cache *mc,
+				__u64 segnum, __s64 value)
+{
+	int ret;
+
+	if (!value || !nilfs_sufile_ext_supported(sufile))
+		return 0;
+
+	if (!mc)
+		return nilfs_sufile_mc_update(sufile, segnum, value,
+				nilfs_sufile_do_flush_nlive_blks);
+
+	if (!nilfs_sufile_mc_add(mc, segnum, value))
+		return 0;
+
+	ret = nilfs_sufile_flush_nlive_blks(sufile, mc);
+
+	nilfs_sufile_mc_reset(mc, segnum, value);
+
+	return ret;
+}
+
+/**
  * nilfs_sufile_read - read or get sufile inode
  * @sb: super block instance
  * @susize: size of a segment usage entry
