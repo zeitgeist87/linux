@@ -80,6 +80,7 @@ struct nilfs_cstage {
 };
 
 struct nilfs_segment_buffer;
+struct nilfs_sufile_mod_cache;
 
 struct nilfs_segsum_pointer {
 	struct buffer_head     *bh;
@@ -129,6 +130,7 @@ struct nilfs_segsum_pointer {
  * @sc_watermark: Watermark for the number of dirty buffers
  * @sc_timer: Timer for segctord
  * @sc_task: current thread of segctord
+ * @sc_mc: mod cache to add up updates for SUFILE during seg construction
  */
 struct nilfs_sc_info {
 	struct super_block     *sc_super;
@@ -185,6 +187,7 @@ struct nilfs_sc_info {
 
 	struct timer_list	sc_timer;
 	struct task_struct     *sc_task;
+	struct nilfs_sufile_mod_cache *sc_mc;
 };
 
 /* sc_flags */

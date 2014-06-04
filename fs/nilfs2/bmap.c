@@ -288,6 +288,43 @@ int nilfs_bmap_truncate(struct nilfs_bmap *bmap, unsigned long key)
 }
 
 /**
+ * nilfs_bmap_truncate_with_mc - truncate a bmap to a specified key
+ * @bmap: bmap
+ * @mc: modification cache
+ * @key: key
+ *
+ * Description: nilfs_bmap_truncate_with_mc() removes key-record pairs whose
+ * keys are greater than or equal to @key from @bmap. It has the same
+ * functionality as nilfs_bmap_truncate(), but allows the passing
+ * of a modification cache to update segment usage information.
+ *
+ * Return Value: On success, 0 is returned. On error, one of the following
+ * negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ */
+int nilfs_bmap_truncate_with_mc(struct nilfs_bmap *bmap,
+				struct nilfs_sufile_mod_cache *mc,
+				unsigned long key)
+{
+	int ret;
+
+	down_write(&bmap->b_sem);
+
+	bmap->b_private = mc;
+
+	ret = nilfs_bmap_do_truncate(bmap, key);
+
+	bmap->b_private = NULL;
+
+	up_write(&bmap->b_sem);
+
+	return nilfs_bmap_convert_error(bmap, __func__, ret);
+}
+
+/**
  * nilfs_bmap_clear - free resources a bmap holds
  * @bmap: bmap
  *
@@ -322,6 +359,43 @@ int nilfs_bmap_propagate(struct nilfs_bmap *bmap, struct buffer_head *bh)
 
 	down_write(&bmap->b_sem);
 	ret = bmap->b_ops->bop_propagate(bmap, bh);
+	up_write(&bmap->b_sem);
+
+	return nilfs_bmap_convert_error(bmap, __func__, ret);
+}
+
+/**
+ * nilfs_bmap_propagate_with_mc - propagate dirty state
+ * @bmap: bmap
+ * @mc: modification cache
+ * @bh: buffer head
+ *
+ * Description: nilfs_bmap_propagate_with_mc() marks the buffers that directly
+ * or indirectly refer to the block specified by @bh dirty. It has
+ * the same functionality as nilfs_bmap_propagate(), but allows the passing
+ * of a modification cache to update segment usage information.
+ *
+ * Return Value: On success, 0 is returned. On error, one of the following
+ * negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ */
+int nilfs_bmap_propagate_with_mc(struct nilfs_bmap *bmap,
+				 struct nilfs_sufile_mod_cache *mc,
+				 struct buffer_head *bh)
+{
+	int ret;
+
+	down_write(&bmap->b_sem);
+
+	bmap->b_private = mc;
+
+	ret = bmap->b_ops->bop_propagate(bmap, bh);
+
+	bmap->b_private = NULL;
+
 	up_write(&bmap->b_sem);
 
 	return nilfs_bmap_convert_error(bmap, __func__, ret);
@@ -490,6 +564,7 @@ int nilfs_bmap_read(struct nilfs_bmap *bmap, struct nilfs_inode *raw_inode)
 
 	init_rwsem(&bmap->b_sem);
 	bmap->b_state = 0;
+	bmap->b_private = NULL;
 	bmap->b_inode = &NILFS_BMAP_I(bmap)->vfs_inode;
 	switch (bmap->b_inode->i_ino) {
 	case NILFS_DAT_INO:
@@ -551,6 +626,7 @@ void nilfs_bmap_init_gc(struct nilfs_bmap *bmap)
 	bmap->b_last_allocated_key = 0;
 	bmap->b_last_allocated_ptr = NILFS_BMAP_INVALID_PTR;
 	bmap->b_state = 0;
+	bmap->b_private = NULL;
 	nilfs_btree_init_gc(bmap);
 }
 

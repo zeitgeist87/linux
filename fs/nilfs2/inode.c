@@ -34,6 +34,7 @@
 #include "mdt.h"
 #include "cpfile.h"
 #include "ifile.h"
+#include "sufile.h"
 
 /**
  * struct nilfs_iget_args - arguments used during comparison between inodes
@@ -714,29 +715,42 @@ void nilfs_update_inode(struct inode *inode, struct buffer_head *ibh, int flags)
 static void nilfs_truncate_bmap(struct nilfs_inode_info *ii,
 				unsigned long from)
 {
+	struct the_nilfs *nilfs = ii->vfs_inode.i_sb->s_fs_info;
+	struct nilfs_sufile_mod_cache mc, *mcp = NULL;
 	unsigned long b;
 	int ret;
 
 	if (!test_bit(NILFS_I_BMAP, &ii->i_state))
 		return;
+
+	if (nilfs_feature_track_live_blks(nilfs) &&
+	    !nilfs_sufile_mc_init(&mc, NILFS_SUFILE_MC_SIZE_DEFAULT))
+		mcp = &mc;
+
 repeat:
 	ret = nilfs_bmap_last_key(ii->i_bmap, &b);
 	if (ret == -ENOENT)
-		return;
+		goto out_free;
 	else if (ret < 0)
 		goto failed;
 
 	if (b < from)
-		return;
+		goto out_free;
 
 	b -= min_t(unsigned long, NILFS_MAX_TRUNCATE_BLOCKS, b - from);
-	ret = nilfs_bmap_truncate(ii->i_bmap, b);
+	ret = nilfs_bmap_truncate_with_mc(ii->i_bmap, mcp, b);
 	nilfs_relax_pressure_in_lock(ii->vfs_inode.i_sb);
 	if (!ret || (ret == -ENOMEM &&
-		     nilfs_bmap_truncate(ii->i_bmap, b) == 0))
+		     nilfs_bmap_truncate_with_mc(ii->i_bmap, mcp, b) == 0))
 		goto repeat;
 
+out_free:
+	nilfs_sufile_flush_nlive_blks(nilfs->ns_sufile, mcp);
+	nilfs_sufile_mc_destroy(mcp);
+	return;
 failed:
+	nilfs_sufile_flush_nlive_blks(nilfs->ns_sufile, mcp);
+	nilfs_sufile_mc_destroy(mcp);
 	nilfs_warning(ii->vfs_inode.i_sb, __func__,
 		      "failed to truncate bmap (ino=%lu, err=%d)",
 		      ii->vfs_inode.i_ino, ret);
