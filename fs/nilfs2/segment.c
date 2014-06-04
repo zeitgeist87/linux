@@ -514,7 +514,8 @@ static int nilfs_collect_file_data(struct nilfs_sc_info *sci,
 {
 	int err;
 
-	err = nilfs_bmap_propagate(NILFS_I(inode)->i_bmap, bh);
+	err = nilfs_bmap_propagate_with_mc(NILFS_I(inode)->i_bmap,
+					   sci->sc_mc, bh);
 	if (err < 0)
 		return err;
 
@@ -529,7 +530,8 @@ static int nilfs_collect_file_node(struct nilfs_sc_info *sci,
 				   struct buffer_head *bh,
 				   struct inode *inode)
 {
-	return nilfs_bmap_propagate(NILFS_I(inode)->i_bmap, bh);
+	return nilfs_bmap_propagate_with_mc(NILFS_I(inode)->i_bmap,
+					    sci->sc_mc, bh);
 }
 
 static int nilfs_collect_file_bmap(struct nilfs_sc_info *sci,
@@ -1380,7 +1382,7 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 		segbuf->sb_nlive_blks_added = segbuf->sb_sum.nfileblk;
 
 		if (nilfs_feature_track_live_blks(nilfs))
-			nilfs_sufile_mod_nlive_blks(sufile, NULL,
+			nilfs_sufile_mod_nlive_blks(sufile, sci->sc_mc,
 						segbuf->sb_segnum,
 						segbuf->sb_nlive_blks_added);
 	}
@@ -1993,6 +1995,9 @@ static int nilfs_segctor_do_construct(struct nilfs_sc_info *sci, int mode)
 		}
 		nilfs_segctor_update_segusage(sci, nilfs);
 
+		nilfs_sufile_flush_nlive_blks(nilfs->ns_sufile,
+					      sci->sc_mc);
+
 		/* Write partial segments */
 		nilfs_segctor_prepare_write(sci);
 
@@ -2582,6 +2587,7 @@ static struct nilfs_sc_info *nilfs_segctor_new(struct super_block *sb,
 {
 	struct the_nilfs *nilfs = sb->s_fs_info;
 	struct nilfs_sc_info *sci;
+	int ret;
 
 	sci = kzalloc(sizeof(*sci), GFP_KERNEL);
 	if (!sci)
@@ -2610,6 +2616,18 @@ static struct nilfs_sc_info *nilfs_segctor_new(struct super_block *sb,
 		sci->sc_interval = HZ * nilfs->ns_interval;
 	if (nilfs->ns_watermark)
 		sci->sc_watermark = nilfs->ns_watermark;
+
+	if (nilfs_feature_track_live_blks(nilfs)) {
+		sci->sc_mc = kmalloc(sizeof(*(sci->sc_mc)), GFP_KERNEL);
+		if (sci->sc_mc) {
+			ret = nilfs_sufile_mc_init(sci->sc_mc,
+						   NILFS_SUFILE_MC_SIZE_EXT);
+			if (ret) {
+				kfree(sci->sc_mc);
+				sci->sc_mc = NULL;
+			}
+		}
+	}
 	return sci;
 }
 
@@ -2667,6 +2685,8 @@ static void nilfs_segctor_destroy(struct nilfs_sc_info *sci)
 	down_write(&nilfs->ns_segctor_sem);
 
 	del_timer_sync(&sci->sc_timer);
+	nilfs_sufile_mc_destroy(sci->sc_mc);
+	kfree(sci->sc_mc);
 	kfree(sci);
 }
 
