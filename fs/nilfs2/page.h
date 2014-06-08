@@ -36,13 +36,17 @@ enum {
 	BH_NILFS_Volatile,
 	BH_NILFS_Checked,
 	BH_NILFS_Redirected,
+	BH_NILFS_Snapshot,
+	BH_NILFS_Protection_Period,
 };
 
 BUFFER_FNS(NILFS_Node, nilfs_node)		/* nilfs node buffers */
 BUFFER_FNS(NILFS_Volatile, nilfs_volatile)
 BUFFER_FNS(NILFS_Checked, nilfs_checked)	/* buffer is verified */
 BUFFER_FNS(NILFS_Redirected, nilfs_redirected)	/* redirected to a copy */
-
+BUFFER_FNS(NILFS_Snapshot, nilfs_snapshot)	/* belongs to a snapshot */
+BUFFER_FNS(NILFS_Protection_Period, nilfs_protection_period) /* protected by
+							protection period */
 
 int __nilfs_clear_page_dirty(struct page *);
 
