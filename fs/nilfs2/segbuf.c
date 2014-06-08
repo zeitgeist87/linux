@@ -58,6 +58,7 @@ struct nilfs_segment_buffer *nilfs_segbuf_new(struct super_block *sb)
 	INIT_LIST_HEAD(&segbuf->sb_payload_buffers);
 	segbuf->sb_super_root = NULL;
 	segbuf->sb_nlive_blks_added = 0;
+	segbuf->sb_nlive_blks_diff = 0;
 
 	init_completion(&segbuf->sb_bio_event);
 	atomic_set(&segbuf->sb_err, 0);
@@ -451,6 +452,9 @@ static int nilfs_segbuf_submit_bh(struct nilfs_segment_buffer *segbuf,
 
 	len = bio_add_page(wi->bio, bh->b_page, bh->b_size, bh_offset(bh));
 	if (len == bh->b_size) {
+		lock_buffer(bh);
+		map_bh(bh, segbuf->sb_super, wi->blocknr + wi->end);
+		unlock_buffer(bh);
 		wi->end++;
 		return 0;
 	}

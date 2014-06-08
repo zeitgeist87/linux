@@ -1385,7 +1385,8 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 		WARN_ON(ret); /* always succeed because the segusage is dirty */
 
 		/* should always be positive */
-		segbuf->sb_nlive_blks_added = segbuf->sb_sum.nfileblk;
+		segbuf->sb_nlive_blks_added = segbuf->sb_nlive_blks_diff +
+					      segbuf->sb_sum.nfileblk;
 
 		if (nilfs_feature_track_live_blks(nilfs))
 			nilfs_sufile_mod_nlive_blks(sufile, sci->sc_mc,
@@ -1497,12 +1498,98 @@ static void nilfs_list_replace_buffer(struct buffer_head *old_bh,
 	/* The caller must release old_bh */
 }
 
+/**
+ * nilfs_segctor_dec_nlive_blks_gc - dec. nlive_blks for blocks of GC-Inodes
+ * @dat: dat inode
+ * @segbuf: currtent segment buffer
+ * @bh: current buffer head
+ *
+ * Description: nilfs_segctor_dec_nlive_blks_gc() is called if the inode to
+ * which @bh belongs is a GC-Inode. In that case it is not necessary to
+ * decrement the previous segment, because at the end of the GC process it
+ * will be freed anyway. It is however necessary to check again if the blocks
+ * are alive here, because the last check was in userspace without the proper
+ * locking. Additionally the blocks protected by the protection period should
+ * be considered reclaimable. It is assumed, that @bh->b_blocknr contains
+ * a virtual block number, which is only true if @bh is part of a GC-Inode.
+ */
+static void nilfs_segctor_dec_nlive_blks_gc(struct inode *dat,
+					    struct nilfs_segment_buffer *segbuf,
+					    struct buffer_head *bh) {
+	bool isreclaimable = buffer_nilfs_protection_period(bh) ||
+				!nilfs_dat_is_live(dat, bh->b_blocknr, NULL);
+
+	if (!buffer_nilfs_snapshot(bh) && isreclaimable)
+		segbuf->sb_nlive_blks_diff--;
+}
+
+/**
+ * nilfs_segctor_dec_nlive_blks_nogc - dec. nlive_blks of segment
+ * @nilfs: the nilfs object
+ * @mc: modification cache
+ * @sb: currtent segment buffer
+ * @blocknr: current block number
+ *
+ * Description: Gets the segment number of the segment @blocknr belongs to
+ * and decrements the su_nlive_blks field of the corresponding segment usage
+ * entry.
+ */
+static void nilfs_segctor_dec_nlive_blks_nogc(struct the_nilfs *nilfs,
+					      struct nilfs_sufile_mod_cache *mc,
+					      struct nilfs_segment_buffer *sb,
+					      sector_t blocknr)
+{
+	__u64 segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
+
+	if (segnum >= nilfs->ns_nsegments)
+		return;
+
+	if (segnum == sb->sb_segnum)
+		sb->sb_nlive_blks_diff--;
+	else
+		nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile, mc, segnum, -1);
+}
+
+/**
+ * nilfs_segctor_dec_nlive_blks - dec. nlive_blks of previous segment
+ * @nilfs: the nilfs object
+ * @mc: modification cache
+ * @sb: currtent segment buffer
+ * @bh: current buffer head
+ * @ino: current inode number
+ * @gc_inode: true if current inode is a GC-Inode
+ *
+ * Description: Handles GC-Inodes and normal inodes differently. For normal
+ * inodes @bh->b_blocknr contains the location where the block was read in. If
+ * the block is updated, the old version of it is considered reclaimable and so
+ * the su_nlive_blks field of the segment usage information of the old segment
+ * needs to be decremented. Only the DATFILE and SUFILE are decremented here,
+ * because normal files and other meta data files can be better decremented in
+ * nilfs_dat_commit_end().
+ */
+static void nilfs_segctor_dec_nlive_blks(struct the_nilfs *nilfs,
+					 struct nilfs_sufile_mod_cache *mc,
+					 struct nilfs_segment_buffer *sb,
+					 struct buffer_head *bh,
+					 ino_t ino,
+					 bool gc_inode)
+{
+	bool isnode = buffer_nilfs_node(bh);
+
+	if (gc_inode)
+		nilfs_segctor_dec_nlive_blks_gc(nilfs->ns_dat, sb, bh);
+	else if (ino == NILFS_DAT_INO || (ino == NILFS_SUFILE_INO && !isnode))
+		nilfs_segctor_dec_nlive_blks_nogc(nilfs, mc, sb, bh->b_blocknr);
+}
+
 static int
 nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 				     struct nilfs_segment_buffer *segbuf,
 				     int mode)
 {
+	struct the_nilfs *nilfs = sci->sc_super->s_fs_info;
 	struct inode *inode = NULL;
+	struct nilfs_inode_info *ii;
 	sector_t blocknr;
 	unsigned long nfinfo = segbuf->sb_sum.nfinfo;
 	unsigned long nblocks = 0, ndatablk = 0;
@@ -1512,7 +1599,9 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 	union nilfs_binfo binfo;
 	struct buffer_head *bh, *bh_org;
 	ino_t ino = 0;
-	int err = 0;
+	int err = 0, gc_inode = 0, track_live_blks;
+
+	track_live_blks = nilfs_feature_track_live_blks(nilfs);
 
 	if (!nfinfo)
 		goto out;
@@ -1533,6 +1622,9 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 
 			inode = bh->b_page->mapping->host;
 
+			ii = NILFS_I(inode);
+			gc_inode = test_bit(NILFS_I_GCINODE, &ii->i_state);
+
 			if (mode == SC_LSEG_DSYNC)
 				sc_op = &nilfs_sc_dsync_ops;
 			else if (ino == NILFS_DAT_INO)
@@ -1540,6 +1632,11 @@ nilfs_segctor_update_payload_blocknr(struct nilfs_sc_info *sci,
 			else /* file blocks */
 				sc_op = &nilfs_sc_file_ops;
 		}
+
+		if (track_live_blks)
+			nilfs_segctor_dec_nlive_blks(nilfs, sci->sc_mc, segbuf,
+						     bh, ino, gc_inode);
+
 		bh_org = bh;
 		get_bh(bh_org);
 		err = nilfs_bmap_assign(NILFS_I(inode)->i_bmap, &bh, blocknr,
