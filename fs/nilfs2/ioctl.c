@@ -578,7 +578,7 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 	struct buffer_head *bh;
 	int ret;
 
-	if (vdesc->vd_flags == 0)
+	if (nilfs_vdesc_data(vdesc))
 		ret = nilfs_gccache_submit_read_data(
 			inode, vdesc->vd_offset, vdesc->vd_blocknr,
 			vdesc->vd_vblocknr, &bh);
@@ -592,7 +592,8 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 			       "%s: invalid virtual block address (%s): "
 			       "ino=%llu, cno=%llu, offset=%llu, "
 			       "blocknr=%llu, vblocknr=%llu\n",
-			       __func__, vdesc->vd_flags ? "node" : "data",
+			       __func__,
+			       nilfs_vdesc_node(vdesc) ? "node" : "data",
 			       (unsigned long long)vdesc->vd_ino,
 			       (unsigned long long)vdesc->vd_cno,
 			       (unsigned long long)vdesc->vd_offset,
@@ -603,7 +604,8 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 	if (unlikely(!list_empty(&bh->b_assoc_buffers))) {
 		printk(KERN_CRIT "%s: conflicting %s buffer: ino=%llu, "
 		       "cno=%llu, offset=%llu, blocknr=%llu, vblocknr=%llu\n",
-		       __func__, vdesc->vd_flags ? "node" : "data",
+		       __func__,
+		       nilfs_vdesc_node(vdesc) ? "node" : "data",
 		       (unsigned long long)vdesc->vd_ino,
 		       (unsigned long long)vdesc->vd_cno,
 		       (unsigned long long)vdesc->vd_offset,
@@ -612,6 +614,12 @@ static int nilfs_ioctl_move_inode_block(struct inode *inode,
 		brelse(bh);
 		return -EEXIST;
 	}
+
+	if (nilfs_vdesc_snapshot(vdesc))
+		set_buffer_nilfs_snapshot(bh);
+	if (nilfs_vdesc_protection_period(vdesc))
+		set_buffer_nilfs_protection_period(bh);
+
 	list_add_tail(&bh->b_assoc_buffers, buffers);
 	return 0;
 }
@@ -662,6 +670,15 @@ static int nilfs_ioctl_move_blocks(struct super_block *sb,
 		}
 
 		do {
+			/*
+			 * old user space tools to not initialize vd_blk_flags
+			 * if vd_period.p_start > 0 then vd_blk_flags was
+			 * not initialized properly and may contain invalid
+			 * flags
+			 */
+			if (vdesc->vd_period.p_start > 0)
+				vdesc->vd_blk_flags = 0;
+
 			ret = nilfs_ioctl_move_inode_block(inode, vdesc,
 							   &buffers);
 			if (unlikely(ret < 0)) {
