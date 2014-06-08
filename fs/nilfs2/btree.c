@@ -2206,7 +2206,7 @@ static int nilfs_btree_assign_gc(struct nilfs_bmap *btree,
 	int ret;
 
 	ret = nilfs_dat_move(nilfs_bmap_get_dat(btree), (*bh)->b_blocknr,
-			     blocknr);
+			     blocknr, buffer_nilfs_snapshot(*bh));
 	if (ret < 0)
 		return ret;
 

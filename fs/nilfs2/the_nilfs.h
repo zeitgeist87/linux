@@ -409,4 +409,11 @@ static inline int nilfs_feature_track_live_blks(struct the_nilfs *nilfs)
 		NILFS_FEATURE_COMPAT_SUFILE_EXTENSION);
 }
 
+static inline int nilfs_feature_track_snapshots(struct the_nilfs *nilfs)
+{
+	return (nilfs->ns_feature_compat &
+		NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS) &&
+		nilfs_feature_track_live_blks(nilfs);
+}
+
 #endif /* _THE_NILFS_H */

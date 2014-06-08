@@ -222,11 +222,13 @@ struct nilfs_super_block {
  */
 #define NILFS_FEATURE_COMPAT_SUFILE_EXTENSION		(1ULL << 0)
 #define NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS		(1ULL << 1)
+#define NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS		(1ULL << 2)
 
 #define NILFS_FEATURE_COMPAT_RO_BLOCK_COUNT		(1ULL << 0)
 
 #define NILFS_FEATURE_COMPAT_SUPP	(NILFS_FEATURE_COMPAT_SUFILE_EXTENSION \
-				| NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS)
+				| NILFS_FEATURE_COMPAT_TRACK_LIVE_BLKS \
+				| NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS)
 #define NILFS_FEATURE_COMPAT_RO_SUPP	NILFS_FEATURE_COMPAT_RO_BLOCK_COUNT
 #define NILFS_FEATURE_INCOMPAT_SUPP	0ULL
 
@@ -479,13 +481,13 @@ struct nilfs_palloc_group_desc {
  * @de_blocknr: block number
  * @de_start: start checkpoint number
  * @de_end: end checkpoint number
- * @de_rsv: reserved for future use
+ * @de_ss: one of the snapshots the block belongs to
  */
 struct nilfs_dat_entry {
 	__le64 de_blocknr;
 	__le64 de_start;
 	__le64 de_end;
-	__le64 de_rsv;
+	__le64 de_ss;
 };
 
 #define NILFS_MIN_DAT_ENTRY_SIZE	32
