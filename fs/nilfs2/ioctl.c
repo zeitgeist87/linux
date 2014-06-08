@@ -1001,6 +1001,97 @@ out:
 }
 
 /**
+ * nilfs_ioctl_set_inc_flags - set flag to indicate the blocks were incremented
+ * @inode: inode object
+ * @filp: file object
+ * @cmd: ioctl's request code
+ * @argp: pointer on argument from userspace
+ *
+ * Description: nilfs_ioctl_set_inc_flags() takes an array of vblocknrs
+ * and sets the flag NILFS_ENTRY_INC, if necessary, to indicate
+ * that the segment usage information of the segment to which the corresponding
+ * DAT-Entries belong were incremented.
+ *
+ * If NILFS_ENTRY_INC is set, the su_nlive_blks counter for the segment the
+ * corresponding block belongs to, was incremented. Therefore the flag
+ * indicates that the counter does not need to be incremented again in the
+ * future. If the counter is modified from userspace with the set_suinfo ioctl,
+ * the corresponding NILFS_ENTRY_INC flags must also be changed. This ioctl
+ * enables the manipulation the these flags from userspace.
+ *
+ * Return Value: On success, 0 is returned or error code, otherwise.
+ */
+static int nilfs_ioctl_set_inc_flags(struct inode *inode,
+				     struct file *filp,
+				     unsigned int cmd,
+				     void __user *argp)
+{
+	struct the_nilfs *nilfs = inode->i_sb->s_fs_info;
+	struct nilfs_transaction_info ti;
+	struct nilfs_argv argv;
+	__u64 *vblocknrs;
+	size_t len, i;
+	void __user *base;
+	void *kbuf;
+	int ret;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	ret = mnt_want_write_file(filp);
+	if (ret)
+		return ret;
+
+	ret = -EFAULT;
+	if (copy_from_user(&argv, argp, sizeof(struct nilfs_argv)))
+		goto out;
+
+	ret = -EINVAL;
+	if (argv.v_size != sizeof(__u64))
+		goto out;
+	if (argv.v_nmembs > UINT_MAX / sizeof(__u64))
+		goto out;
+
+	len = argv.v_size * argv.v_nmembs;
+	if (!len) {
+		ret = 0;
+		goto out;
+	}
+
+	base = (void __user *)(unsigned long)argv.v_base;
+	kbuf = vmalloc(len);
+	if (!kbuf) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	if (copy_from_user(kbuf, base, len)) {
+		ret = -EFAULT;
+		goto out_free;
+	}
+
+	ret = nilfs_transaction_begin(inode->i_sb, &ti, 0);
+	if (unlikely(ret))
+		goto out_free;
+
+	for (i = 0, vblocknrs = kbuf; i < argv.v_nmembs; ++i) {
+		ret = nilfs_dat_set_inc(nilfs->ns_dat, vblocknrs[i]);
+		if (ret) {
+			nilfs_transaction_abort(inode->i_sb);
+			goto out_free;
+		}
+	}
+
+	nilfs_transaction_commit(inode->i_sb);
+
+out_free:
+	vfree(kbuf);
+out:
+	mnt_drop_write_file(filp);
+	return ret;
+}
+
+/**
  * nilfs_ioctl_sync - make a checkpoint
  * @inode: inode object
  * @filp: file object
@@ -1347,6 +1438,8 @@ long nilfs_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		return nilfs_ioctl_get_bdescs(inode, filp, cmd, argp);
 	case NILFS_IOCTL_CLEAN_SEGMENTS:
 		return nilfs_ioctl_clean_segments(inode, filp, cmd, argp);
+	case NILFS_IOCTL_SET_INC_FLAGS:
+		return nilfs_ioctl_set_inc_flags(inode, filp, cmd, argp);
 	case NILFS_IOCTL_SYNC:
 		return nilfs_ioctl_sync(inode, filp, cmd, argp);
 	case NILFS_IOCTL_RESIZE:
@@ -1383,6 +1476,7 @@ long nilfs_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	case NILFS_IOCTL_GET_VINFO:
 	case NILFS_IOCTL_GET_BDESCS:
 	case NILFS_IOCTL_CLEAN_SEGMENTS:
+	case NILFS_IOCTL_SET_INC_FLAGS:
 	case NILFS_IOCTL_SYNC:
 	case NILFS_IOCTL_RESIZE:
 	case NILFS_IOCTL_SET_ALLOC_RANGE:

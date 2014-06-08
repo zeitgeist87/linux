@@ -480,6 +480,54 @@ int nilfs_dat_move(struct inode *dat, __u64 vblocknr, sector_t blocknr,
 }
 
 /**
+ * nilfs_dat_set_inc - set flag to indicate that @vblocknr was incremented
+ * @dat: DAT file inode
+ * @vblocknr: virtual block number
+ *
+ * Description: nilfs_dat_set_inc() sets the flag NILFS_ENTRY_INC, if
+ * necessary, to indicate that the segment usage information of the segment
+ * to which the DAT-Entry of @vblocknr belongs was incremented. This flag is
+ * important to assure accurate counting of live blocks.
+ *
+ * If NILFS_ENTRY_INC is set, the su_nlive_blks counter for the segment the
+ * corresponding block belongs to, was incremented. Therefore the flag
+ * indicates that the counter does not need to be incremented again
+ * in the future. The flag essentially prevents the counter from being
+ * incremented multiple times for one and the same block.
+ *
+ * Return Value: On success, 0 is returned. On error, one of the following
+ * negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ */
+int nilfs_dat_set_inc(struct inode *dat, __u64 vblocknr)
+{
+	struct buffer_head *entry_bh;
+	struct nilfs_dat_entry *entry;
+	void *kaddr;
+	int ret;
+
+	ret = nilfs_palloc_get_entry_block(dat, vblocknr, 0, &entry_bh);
+	if (ret < 0)
+		return ret;
+
+	kaddr = kmap_atomic(entry_bh->b_page);
+	entry = nilfs_palloc_block_get_entry(dat, vblocknr, entry_bh, kaddr);
+	if (nilfs_dat_entry_is_dec(entry)) {
+		entry->de_ss = cpu_to_le64(NILFS_ENTRY_INC);
+		kunmap_atomic(kaddr);
+		mark_buffer_dirty(entry_bh);
+		nilfs_mdt_mark_dirty(dat);
+	} else
+		kunmap_atomic(kaddr);
+
+	put_bh(entry_bh);
+	return 0;
+}
+
+/**
  * nilfs_dat_is_live - checks if the virtual block number is alive
  * @dat: DAT file inode
  * @vblocknr: virtual block number
