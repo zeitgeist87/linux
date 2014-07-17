@@ -35,13 +35,13 @@
 #define NILFS_CNO_MAX	(~(__u64)0)
 
 /*
- * special snapshot value used as a flag to indicate
+ * Special snapshot value used as a flag to indicate
  * that the segment usage information to which this
  * entry belongs was incremented
  */
 #define NILFS_ENTRY_INC		((__u64)0)
 /*
- * special snapshot value used as a flag to indicate
+ * Special snapshot value used as a flag to indicate
  * that the segment usage information to which this
  * entry belongs was decremented
  */
@@ -275,19 +275,21 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 	sector_t blocknr;
 	void *kaddr;
 	struct the_nilfs *nilfs;
-	int decremented;
+	int decremented = 0;
 
 	kaddr = kmap_atomic(req->pr_entry_bh->b_page);
 	entry = nilfs_palloc_block_get_entry(dat, req->pr_entry_nr,
 					     req->pr_entry_bh, kaddr);
-	decremented = nilfs_dat_entry_is_dec(entry);
 	end = start = le64_to_cpu(entry->de_start);
 	if (!dead) {
 		end = nilfs_mdt_cno(dat);
 		WARN_ON(start > end);
 	}
 	entry->de_end = cpu_to_le64(end);
-	entry->de_ss = cpu_to_le64(NILFS_ENTRY_DEC);
+	if (nilfs_dat_entry_is_inc(entry)) {
+		entry->de_ss = cpu_to_le64(NILFS_ENTRY_DEC);
+		decremented = 1;
+	}
 	blocknr = le64_to_cpu(entry->de_blocknr);
 	kunmap_atomic(kaddr);
 
@@ -298,7 +300,7 @@ void nilfs_dat_commit_end(struct inode *dat, struct nilfs_palloc_req *req,
 
 		nilfs = dat->i_sb->s_fs_info;
 
-		if (!decremented && count_blocks &&
+		if (decremented && count_blocks &&
 		    nilfs_feature_track_live_blks(nilfs)) {
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
@@ -666,10 +668,63 @@ static __u64 nilfs_dat_replace_snapshot(struct nilfs_dat_entry *entry,
 	} else if (nilfs_dat_entry_belongs_to_cp(entry, next)) {
 		entry->de_ss = cpu_to_le64(next);
 		return next;
-	} else if (!nilfs_dat_entry_is_dec(entry))
+	} else if (nilfs_dat_entry_is_live(entry)) {
+		entry->de_ss = cpu_to_le64(NILFS_ENTRY_INC);
+		return NILFS_ENTRY_INC;
+	} else {
 		entry->de_ss = cpu_to_le64(NILFS_ENTRY_DEC);
+		return NILFS_ENTRY_DEC;
+	}
+}
 
-	return NILFS_ENTRY_DEC;
+/**
+ * nilfs_dat_entry_needs_dec - determines if @entry should be examined further
+ * @nilfs: the nilfs
+ * @entry: DAT-Entry
+ * @ss: removed snapshot
+ * @prev_ss: the previous snapshot (same as @entry->de_ss)
+ *
+ * Description: Determines if @entry needs to be examined further, to check
+ * if the segment corresponding to the block represented by @entry needs its
+ * segment usage information updated, because the snapshot @ss was removed. If
+ * nilfs_feature_track_snapshots_full() is set all matching blocks are checked.
+ * If it is not set only dead blocks are checked.
+ *
+ * Return Value: boolean value
+ */
+static int nilfs_dat_entry_needs_dec(struct the_nilfs *nilfs,
+				     struct nilfs_dat_entry *entry,
+				     __u64 ss, sector_t blocknr,
+				     __u64 prev_ss) {
+	return blocknr != 0 &&
+		(!nilfs_dat_entry_is_live(entry) ||
+		nilfs_feature_track_snapshots_full(nilfs)) &&
+		(!nilfs_dat_entry_has_ss(entry) || prev_ss == ss) &&
+		nilfs_dat_entry_belongs_to_cp(entry, ss);
+}
+
+/**
+ * nilfs_dat_entry_needs_inc - determines if @entry should be examined further
+ * @nilfs: the nilfs
+ * @entry: DAT-Entry
+ * @ss: created snapshot
+ *
+ * Description: Determines if @entry needs to be examined further, to check
+ * if the segment corresponding to the block represented by @entry needs its
+ * segment usage information updated, because the snapshot @ss was created. If
+ * nilfs_feature_track_snapshots_full() is set all matching blocks are checked.
+ * If it is not set only dead blocks are checked.
+ *
+ * Return Value: boolean value
+ */
+static int nilfs_dat_entry_needs_inc(struct the_nilfs *nilfs,
+				     struct nilfs_dat_entry *entry,
+				     __u64 ss, sector_t blocknr) {
+	return blocknr != 0 &&
+		(!nilfs_dat_entry_is_live(entry) ||
+		nilfs_feature_track_snapshots_full(nilfs)) &&
+		!nilfs_dat_entry_has_ss(entry) &&
+		nilfs_dat_entry_belongs_to_cp(entry, ss);
 }
 
 /**
@@ -704,7 +759,7 @@ static void nilfs_dat_do_scan_dec(struct inode *dat,
 				  struct nilfs_palloc_req *req,
 				  void *data)
 {
-	struct the_nilfs *nilfs;
+	struct the_nilfs *nilfs = dat->i_sb->s_fs_info;
 	struct nilfs_dat_entry *entry;
 	void *kaddr;
 	__u64 prev_ss, segnum;
@@ -719,11 +774,7 @@ static void nilfs_dat_do_scan_dec(struct inode *dat,
 	blocknr = le64_to_cpu(entry->de_blocknr);
 	prev_ss = le64_to_cpu(entry->de_ss);
 
-	if (blocknr != 0 &&
-	    !nilfs_dat_entry_is_live(entry) &&
-	    (!nilfs_dat_entry_has_ss(entry) || prev_ss == ss) &&
-	    nilfs_dat_entry_belongs_to_cp(entry, ss)) {
-
+	if (nilfs_dat_entry_needs_dec(nilfs, entry, ss, blocknr, prev_ss)) {
 		ss = nilfs_dat_replace_snapshot(entry, prev, next);
 		kunmap_atomic(kaddr);
 
@@ -745,12 +796,11 @@ static void nilfs_dat_do_scan_dec(struct inode *dat,
 			else
 				return;
 
-			nilfs = dat->i_sb->s_fs_info;
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
 			nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile,
-						     &sd->mc,
-						     segnum, nblocks);
+						    &sd->mc,
+						    segnum, nblocks);
 		}
 	} else
 		kunmap_atomic(kaddr);
@@ -773,7 +823,7 @@ static void nilfs_dat_do_scan_inc(struct inode *dat,
 				  struct nilfs_palloc_req *req,
 				  void *data)
 {
-	struct the_nilfs *nilfs;
+	struct the_nilfs *nilfs = dat->i_sb->s_fs_info;
 	struct nilfs_dat_entry *entry;
 	void *kaddr;
 	struct nilfs_dat_scan_data *sd = data;
@@ -786,11 +836,7 @@ static void nilfs_dat_do_scan_inc(struct inode *dat,
 	blocknr = le64_to_cpu(entry->de_blocknr);
 	prev_ss = le64_to_cpu(entry->de_ss);
 
-	if (blocknr != 0 &&
-	    !nilfs_dat_entry_is_live(entry) &&
-	    !nilfs_dat_entry_has_ss(entry) &&
-	    nilfs_dat_entry_belongs_to_cp(entry, ss)) {
-
+	if (nilfs_dat_entry_needs_inc(nilfs, entry, ss, blocknr)) {
 		entry->de_ss = cpu_to_le64(ss);
 
 		kunmap_atomic(kaddr);
@@ -802,12 +848,11 @@ static void nilfs_dat_do_scan_inc(struct inode *dat,
 		 * was set before the snapshot was created
 		 */
 		if (prev_ss == NILFS_ENTRY_DEC) {
-			nilfs = dat->i_sb->s_fs_info;
 			segnum = nilfs_get_segnum_of_block(nilfs, blocknr);
 
 			nilfs_sufile_mod_nlive_blks(nilfs->ns_sufile,
-						     &sd->mc,
-						     segnum, 1);
+						    &sd->mc,
+						    segnum, 1);
 		}
 	} else
 		kunmap_atomic(kaddr);

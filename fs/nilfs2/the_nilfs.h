@@ -409,10 +409,24 @@ static inline int nilfs_feature_track_live_blks(struct the_nilfs *nilfs)
 		NILFS_FEATURE_COMPAT_SUFILE_EXTENSION);
 }
 
-static inline int nilfs_feature_track_snapshots(struct the_nilfs *nilfs)
+static inline int nilfs_feature_track_snapshots_def(struct the_nilfs *nilfs)
 {
 	return (nilfs->ns_feature_compat &
-		NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS) &&
+		NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS_DEF) &&
+		nilfs_feature_track_live_blks(nilfs);
+}
+
+static inline int nilfs_feature_track_snapshots_half(struct the_nilfs *nilfs)
+{
+	return (nilfs->ns_feature_compat &
+		NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS_HALF) &&
+		nilfs_feature_track_live_blks(nilfs);
+}
+
+static inline int nilfs_feature_track_snapshots_full(struct the_nilfs *nilfs)
+{
+	return (nilfs->ns_feature_compat &
+		NILFS_FEATURE_COMPAT_TRACK_SNAPSHOTS_FULL) &&
 		nilfs_feature_track_live_blks(nilfs);
 }
 
