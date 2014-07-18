@@ -791,7 +791,9 @@ static int nilfs_cpfile_clear_snapshot(struct inode *cpfile, __u64 cno)
 	mark_buffer_dirty(header_bh);
 	nilfs_mdt_mark_dirty(cpfile);
 
-	if (nilfs_feature_track_snapshots_half(nilfs) ||
+	if (nilfs_feature_track_snapshots_def(nilfs))
+		nilfs_sufile_fix_starving_segs(nilfs->ns_sufile);
+	else if (nilfs_feature_track_snapshots_half(nilfs) ||
 	    nilfs_feature_track_snapshots_full(nilfs))
 		nilfs_dat_scan_dec_ss(nilfs->ns_dat, cno, prev, next);
 
