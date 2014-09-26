@@ -33,15 +33,31 @@
  * struct nilfs_ifile_info - on-memory private data of ifile
  * @mi: on-memory private data of metadata file
  * @palloc_cache: persistent object allocator cache of ifile
+ * @last_dir: ino of the last directory allocated
  */
 struct nilfs_ifile_info {
 	struct nilfs_mdt_info mi;
 	struct nilfs_palloc_cache palloc_cache;
+	__u64 last_dir;
 };
 
 static inline struct nilfs_ifile_info *NILFS_IFILE_I(struct inode *ifile)
 {
 	return (struct nilfs_ifile_info *)NILFS_MDT(ifile);
+}
+/**
+ * nilfs_ifile_last_dir_reset - set last_dir to 0
+ * @ifile: ifile inode
+ *
+ * Description: The value of last_dir will increase with every new
+ * allocation of a directory, because it is used as the starting point of the
+ * search for a free entry in the ifile. It should be reset periodically to 0
+ * (e.g.: every segctor timeout), so that previously deleted entries can be
+ * found.
+ */
+void nilfs_ifile_last_dir_reset(struct inode *ifile)
+{
+	NILFS_IFILE_I(ifile)->last_dir = 0;
 }
 
 /**
@@ -62,17 +78,30 @@ static inline struct nilfs_ifile_info *NILFS_IFILE_I(struct inode *ifile)
  *
  * %-ENOSPC - No inode left.
  */
-int nilfs_ifile_create_inode(struct inode *ifile, ino_t *out_ino,
+int nilfs_ifile_create_inode(struct inode *ifile, ino_t parent,
+			     umode_t mode, ino_t *out_ino,
 			     struct buffer_head **out_bh)
 {
 	struct nilfs_palloc_req req;
 	int ret;
 
-	req.pr_entry_nr = 0;  /* 0 says find free inode from beginning of
-				 a group. dull code!! */
 	req.pr_entry_bh = NULL;
 
-	ret = nilfs_palloc_prepare_alloc_entry(ifile, &req);
+	if (S_ISDIR(mode)) {
+		req.pr_entry_nr = NILFS_IFILE_I(ifile)->last_dir;
+		ret = __nilfs_palloc_prepare_alloc_entry(ifile, &req,
+				NILFS_PALLOC_ALIGNED | NILFS_PALLOC_EMPTY,
+				nilfs_palloc_entries_per_group(ifile) >> 2);
+		if (unlikely(ret == -ENOSPC)) {
+			/* fallback to normal allocation */
+			req.pr_entry_nr = 0;
+			ret = nilfs_palloc_prepare_alloc_entry(ifile, &req);
+		}
+	} else {
+		req.pr_entry_nr = parent + 1;
+		ret = nilfs_palloc_prepare_alloc_entry(ifile, &req);
+	}
+
 	if (!ret) {
 		ret = nilfs_palloc_get_entry_block(ifile, req.pr_entry_nr, 1,
 						   &req.pr_entry_bh);
@@ -86,6 +115,14 @@ int nilfs_ifile_create_inode(struct inode *ifile, ino_t *out_ino,
 	nilfs_palloc_commit_alloc_entry(ifile, &req);
 	mark_buffer_dirty(req.pr_entry_bh);
 	nilfs_mdt_mark_dirty(ifile);
+	/*
+	 * possible race condition/non atomic update
+	 * last_dir is just a hint for the next allocation so
+	 * the possible invalid values are not really harmful
+	 */
+	if (S_ISDIR(mode))
+		NILFS_IFILE_I(ifile)->last_dir = req.pr_entry_nr +
+						 BITS_PER_LONG;
 	*out_ino = (ino_t)req.pr_entry_nr;
 	*out_bh = req.pr_entry_bh;
 	return 0;
@@ -105,7 +142,7 @@ int nilfs_ifile_create_inode(struct inode *ifile, ino_t *out_ino,
  *
  * %-ENOENT - The inode number @ino have not been allocated.
  */
-int nilfs_ifile_delete_inode(struct inode *ifile, ino_t ino)
+int nilfs_ifile_delete_inode(struct inode *ifile, ino_t ino, umode_t mode)
 {
 	struct nilfs_palloc_req req = {
 		.pr_entry_nr = ino, .pr_entry_bh = NULL
@@ -137,6 +174,8 @@ int nilfs_ifile_delete_inode(struct inode *ifile, ino_t ino)
 
 	nilfs_palloc_commit_free_entry(ifile, &req);
 
+	if (S_ISDIR(mode))
+		NILFS_IFILE_I(ifile)->last_dir = req.pr_entry_nr;
 	return 0;
 }
 

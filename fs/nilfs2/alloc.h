@@ -64,8 +64,21 @@ struct nilfs_palloc_req {
 	struct buffer_head *pr_entry_bh;
 };
 
-int nilfs_palloc_prepare_alloc_entry(struct inode *,
-				     struct nilfs_palloc_req *);
+
+#define NILFS_PALLOC_ALIGNED	0x0001  /* newly allocated entry is aligned
+					   to BITS_PER_LONG entries */
+#define NILFS_PALLOC_EMPTY	0x0002  /* newly allocated entry is followed
+					   by BITS_PER_LONG empty entries */
+
+int __nilfs_palloc_prepare_alloc_entry(struct inode *,
+				       struct nilfs_palloc_req *,
+				       int, unsigned long);
+static inline int nilfs_palloc_prepare_alloc_entry(struct inode *inode,
+						   struct nilfs_palloc_req *req)
+{
+	return __nilfs_palloc_prepare_alloc_entry(inode, req, 0, 0);
+}
+
 void nilfs_palloc_commit_alloc_entry(struct inode *,
 				     struct nilfs_palloc_req *);
 void nilfs_palloc_abort_alloc_entry(struct inode *, struct nilfs_palloc_req *);

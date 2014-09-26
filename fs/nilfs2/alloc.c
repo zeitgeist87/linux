@@ -331,18 +331,18 @@ void *nilfs_palloc_block_get_entry(const struct inode *inode, __u64 nr,
 }
 
 /**
- * nilfs_palloc_find_available_slot - find available slot in a group
+ * nilfs_palloc_find_available_slot_unaligned - find available slot in a group
  * @inode: inode of metadata file using this allocator
  * @group: group number
  * @target: offset number of an entry in the group (start point)
  * @bitmap: bitmap of the group
  * @bsize: size in bits
  */
-static int nilfs_palloc_find_available_slot(struct inode *inode,
-					    unsigned long group,
-					    unsigned long target,
-					    unsigned char *bitmap,
-					    int bsize)
+static int nilfs_palloc_find_available_slot_unaligned(struct inode *inode,
+						      unsigned long group,
+						      unsigned long target,
+						      unsigned char *bitmap,
+						      int bsize)
 {
 	int curr, pos, end, i;
 
@@ -378,6 +378,85 @@ static int nilfs_palloc_find_available_slot(struct inode *inode,
 		}
 	}
 	return -ENOSPC;
+}
+
+#if defined(__LITTLE_ENDIAN)
+#define NILFS_PALLOC_ALIGNED_MASK	1UL
+#elif defined(__BIG_ENDIAN)
+#define NILFS_PALLOC_ALIGNED_MASK	(1UL << BITS_PER_LONG)
+#else
+# error need to define endianess
+#endif
+
+/**
+ * nilfs_palloc_find_available_slot_aligned - find available slot in a group
+ * @inode: inode of metadata file using this allocator
+ * @group: group number
+ * @target: offset number of an entry in the group (start point)
+ * @bitmap: bitmap of the group
+ * @bsize: size in bits
+ * @flags: allocation flags
+ *
+ * Description: Finds an available aligned slot in a group. It will be
+ * aligned to BITS_PER_LONG slots, which ensures that the resulting entry
+ * will be at the start of a file system block and improves the performance
+ * of the search. If NILFS_PALLOC_EMPTY is set in @flags the BITS_PER_LONG
+ * slots following the result will also be free.
+ *
+ * Return Value: On success, the available slot is returned.
+ * On error, %-ENOSPC is returned.
+ */
+static int nilfs_palloc_find_available_slot_aligned(struct inode *inode,
+						    unsigned long group,
+						    unsigned long target,
+						    unsigned char *bitmap,
+						    int bsize, int flags)
+{
+	unsigned long mask = NILFS_PALLOC_ALIGNED_MASK;
+	unsigned long *end = (unsigned long *)bitmap + bsize / BITS_PER_LONG;
+	unsigned long *p = (unsigned long *)bitmap + target / BITS_PER_LONG;
+	int i, pos = target & ~(BITS_PER_LONG - 1);
+
+	if (flags & NILFS_PALLOC_EMPTY)
+		mask = ~0UL;
+
+	for (i = 0; i < bsize; i += BITS_PER_LONG, pos += BITS_PER_LONG, ++p) {
+		/* wrap around */
+		if (p == end) {
+			p = (unsigned long *)bitmap;
+			pos = 0;
+		}
+
+		if ((*p & mask) == 0 &&
+		    !nilfs_set_bit_atomic(nilfs_mdt_bgl_lock(inode, group),
+					  pos, bitmap))
+			return pos;
+	}
+
+	return -ENOSPC;
+}
+
+/**
+ * nilfs_palloc_find_available_slot - find available slot in a group
+ * @inode: inode of metadata file using this allocator
+ * @group: group number
+ * @target: offset number of an entry in the group (start point)
+ * @bitmap: bitmap of the group
+ * @bsize: size in bits
+ * @flags: allocation flags
+ */
+static inline int nilfs_palloc_find_available_slot(struct inode *inode,
+						   unsigned long group,
+						   unsigned long target,
+						   unsigned char *bitmap,
+						   int bsize, int flags)
+{
+	if (flags & NILFS_PALLOC_ALIGNED)
+		return nilfs_palloc_find_available_slot_aligned(inode, group,
+						target, bitmap, bsize, flags);
+	else
+		return nilfs_palloc_find_available_slot_unaligned(inode, group,
+						target, bitmap, bsize);
 }
 
 /**
@@ -461,12 +540,38 @@ int nilfs_palloc_count_max_entries(struct inode *inode, u64 nused, u64 *nmaxp)
 }
 
 /**
- * nilfs_palloc_prepare_alloc_entry - prepare to allocate a persistent object
+ * __nilfs_palloc_prepare_alloc_entry - prepare alloc. of a persistent object
  * @inode: inode of metadata file using this allocator
  * @req: nilfs_palloc_req structure exchanged for the allocation
+ * @flags: flags controlling the bitmap allocation
+ * @threshold: allocate only in groups with more free entries than @threshold
+ *
+ * Description: Prepare the allocation of a persistent object. Groups with
+ * less or equal than @threshold free entries are skipped. The following @flags
+ * are available:
+ *
+ * NILFS_PALLOC_ALIGNED
+ *	The newly allocated entry is aligned to BITS_PER_LONG entries. This
+ *	improves the lookup performance and guarantees that the entry will
+ *	be allocated at the start of a block. It will ignore unaligned empty
+ *	slots for allocation.
+ *
+ * NILFS_PALLOC_EMPTY
+ *	The newly allocated entry is followed by BITS_PER_LONG empty entries
+ *	This flag is only valid in combination with NILFS_PALLOC_ALIGNED.
+ *
+ * Return Value: On success, 0 is returned and @req is correctly initialized.
+ * On error, one of the following negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ *
+ * %-ENOSPC - No inode left.
  */
-int nilfs_palloc_prepare_alloc_entry(struct inode *inode,
-				     struct nilfs_palloc_req *req)
+int __nilfs_palloc_prepare_alloc_entry(struct inode *inode,
+				       struct nilfs_palloc_req *req,
+				       int flags, unsigned long threshold)
 {
 	struct buffer_head *desc_bh, *bitmap_bh;
 	struct nilfs_palloc_group_desc *desc;
@@ -501,7 +606,7 @@ int nilfs_palloc_prepare_alloc_entry(struct inode *inode,
 							   maxgroup);
 		for (j = 0; j < n; j++, desc++, group++) {
 			if (nilfs_palloc_group_desc_nfrees(inode, group, desc)
-			    > 0) {
+			    > threshold) {
 				ret = nilfs_palloc_get_bitmap_block(
 					inode, group, 1, &bitmap_bh);
 				if (ret < 0)
@@ -510,7 +615,7 @@ int nilfs_palloc_prepare_alloc_entry(struct inode *inode,
 				bitmap = bitmap_kaddr + bh_offset(bitmap_bh);
 				pos = nilfs_palloc_find_available_slot(
 					inode, group, group_offset, bitmap,
-					entries_per_group);
+					entries_per_group, flags);
 				if (pos >= 0) {
 					/* found a free entry */
 					nilfs_palloc_group_desc_add_entries(
