@@ -412,18 +412,18 @@ static int nilfs_palloc_find_available_slot_aligned(struct inode *inode,
 						    unsigned char *bitmap,
 						    int bsize, int flags)
 {
-	unsigned long mask = NILFS_PALLOC_ALIGNED_MASK;
-	unsigned long *end = (unsigned long *)bitmap + bsize / BITS_PER_LONG;
-	unsigned long *p = (unsigned long *)bitmap + target / BITS_PER_LONG;
-	int i, pos = target & ~(BITS_PER_LONG - 1);
+	u32 mask = 1;
+	u32 *end = (u32 *)bitmap + bsize / 32;
+	u32 *p = (u32 *)bitmap + target / 32;
+	int i, pos = target & ~(32 - 1);
 
 	if (flags & NILFS_PALLOC_EMPTY)
-		mask = ~0UL;
+		mask = ~0;
 
-	for (i = 0; i < bsize; i += BITS_PER_LONG, pos += BITS_PER_LONG, ++p) {
+	for (i = 0; i < bsize; i += 32, pos += 32, ++p) {
 		/* wrap around */
 		if (p == end) {
-			p = (unsigned long *)bitmap;
+			p = (u32 *)bitmap;
 			pos = 0;
 		}
 
