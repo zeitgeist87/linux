@@ -370,7 +370,8 @@ struct inode *nilfs_new_inode(struct inode *dir, umode_t mode)
 	ii->i_state = 1 << NILFS_I_NEW;
 	ii->i_root = root;
 
-	err = nilfs_ifile_create_inode(root->ifile, &ino, &ii->i_bh);
+	err = nilfs_ifile_create_inode(root->ifile, dir->i_ino, mode,
+				       &ino, &ii->i_bh);
 	if (unlikely(err))
 		goto failed_ifile_create_inode;
 	/* reference count of i_bh inherits from nilfs_mdt_read_block() */
@@ -803,7 +804,8 @@ void nilfs_evict_inode(struct inode *inode)
 	nilfs_mark_inode_dirty(inode);
 	clear_inode(inode);
 
-	ret = nilfs_ifile_delete_inode(ii->i_root->ifile, inode->i_ino);
+	ret = nilfs_ifile_delete_inode(ii->i_root->ifile, inode->i_ino,
+				       inode->i_mode);
 	if (!ret)
 		atomic64_dec(&ii->i_root->inodes_count);
 
