@@ -64,8 +64,16 @@ struct nilfs_palloc_req {
 	struct buffer_head *pr_entry_bh;
 };
 
-int nilfs_palloc_prepare_alloc_entry(struct inode *,
-				     struct nilfs_palloc_req *);
+
+int __nilfs_palloc_prepare_alloc_entry(struct inode *,
+				       struct nilfs_palloc_req *,
+				       int, unsigned long);
+static inline int nilfs_palloc_prepare_alloc_entry(struct inode *inode,
+						   struct nilfs_palloc_req *req)
+{
+	return __nilfs_palloc_prepare_alloc_entry(inode, req, 1, 0);
+}
+
 void nilfs_palloc_commit_alloc_entry(struct inode *,
 				     struct nilfs_palloc_req *);
 void nilfs_palloc_abort_alloc_entry(struct inode *, struct nilfs_palloc_req *);
@@ -77,6 +85,13 @@ int nilfs_palloc_freev(struct inode *, __u64 *, size_t);
 #define nilfs_set_bit_atomic		ext2_set_bit_atomic
 #define nilfs_clear_bit_atomic		ext2_clear_bit_atomic
 #define nilfs_find_next_zero_bit	find_next_zero_bit_le
+#if BITS_PER_LONG == 64
+#define nilfs_cpu_to_leul	cpu_to_le64
+#elif BITS_PER_LONG == 32
+#define nilfs_cpu_to_leul	cpu_to_le32
+#else
+#error BITS_PER_LONG not defined
+#endif
 
 /**
  * struct nilfs_bh_assoc - block offset and buffer head association
