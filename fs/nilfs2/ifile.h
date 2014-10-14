@@ -45,6 +45,7 @@ static inline void nilfs_ifile_unmap_inode(struct inode *ifile, ino_t ino,
 	kunmap(ibh->b_page);
 }
 
+void nilfs_ifile_next_inode_reset(struct inode *);
 int nilfs_ifile_create_inode(struct inode *, ino_t *, struct buffer_head **);
 int nilfs_ifile_delete_inode(struct inode *, ino_t);
 int nilfs_ifile_get_inode_block(struct inode *, ino_t, struct buffer_head **);

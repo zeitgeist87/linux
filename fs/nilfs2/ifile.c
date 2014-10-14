@@ -33,15 +33,37 @@
  * struct nilfs_ifile_info - on-memory private data of ifile
  * @mi: on-memory private data of metadata file
  * @palloc_cache: persistent object allocator cache of ifile
+ * @next_inode: ino of the next likely free entry
  */
 struct nilfs_ifile_info {
 	struct nilfs_mdt_info mi;
 	struct nilfs_palloc_cache palloc_cache;
+	__u64 next_inode;
 };
 
 static inline struct nilfs_ifile_info *NILFS_IFILE_I(struct inode *ifile)
 {
 	return (struct nilfs_ifile_info *)NILFS_MDT(ifile);
+}
+
+/**
+ * nilfs_ifile_next_inode_reset - set last_dir to 0
+ * @ifile: ifile inode
+ *
+ * Description: The value of next_inode will increase with every new
+ * allocation of a inode, because it is used as the starting point of the
+ * search for a free entry in the ifile. It should be reset periodically to 0
+ * (e.g.: every segctor timeout), so that previously deleted entries can be
+ * found.
+ */
+void nilfs_ifile_next_inode_reset(struct inode *ifile)
+{
+	/*
+	 * possible race condition/non atomic update
+	 * next_inode is just a hint for the next allocation so
+	 * the possible invalid values are not really harmful
+	 */
+	NILFS_IFILE_I(ifile)->next_inode = 0;
 }
 
 /**
@@ -68,9 +90,8 @@ int nilfs_ifile_create_inode(struct inode *ifile, ino_t *out_ino,
 	struct nilfs_palloc_req req;
 	int ret;
 
-	req.pr_entry_nr = 0;  /* 0 says find free inode from beginning of
-				 a group. dull code!! */
 	req.pr_entry_bh = NULL;
+	req.pr_entry_nr = NILFS_IFILE_I(ifile)->next_inode;
 
 	ret = nilfs_palloc_prepare_alloc_entry(ifile, &req);
 	if (!ret) {
@@ -86,6 +107,9 @@ int nilfs_ifile_create_inode(struct inode *ifile, ino_t *out_ino,
 	nilfs_palloc_commit_alloc_entry(ifile, &req);
 	mark_buffer_dirty(req.pr_entry_bh);
 	nilfs_mdt_mark_dirty(ifile);
+
+	/* see comment in nilfs_ifile_next_inode_reset() */
+	NILFS_IFILE_I(ifile)->next_inode = req.pr_entry_nr + 1;
 	*out_ino = (ino_t)req.pr_entry_nr;
 	*out_bh = req.pr_entry_bh;
 	return 0;
@@ -137,6 +161,9 @@ int nilfs_ifile_delete_inode(struct inode *ifile, ino_t ino)
 
 	nilfs_palloc_commit_free_entry(ifile, &req);
 
+	/* see comment in nilfs_ifile_next_inode_reset() */
+	if (NILFS_IFILE_I(ifile)->next_inode > req.pr_entry_nr)
+		NILFS_IFILE_I(ifile)->next_inode = req.pr_entry_nr;
 	return 0;
 }
 

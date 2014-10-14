@@ -2447,6 +2447,7 @@ static int nilfs_segctor_thread(void *arg)
 {
 	struct nilfs_sc_info *sci = (struct nilfs_sc_info *)arg;
 	struct the_nilfs *nilfs = sci->sc_super->s_fs_info;
+	struct inode *ifile = sci->sc_root->ifile;
 	int timeout = 0;
 
 	sci->sc_timer.data = (unsigned long)current;
@@ -2510,8 +2511,10 @@ static int nilfs_segctor_thread(void *arg)
 		timeout = ((sci->sc_state & NILFS_SEGCTOR_COMMIT) &&
 			   time_after_eq(jiffies, sci->sc_timer.expires));
 
-		if (nilfs_sb_dirty(nilfs) && nilfs_sb_need_update(nilfs))
+		if (nilfs_sb_dirty(nilfs) && nilfs_sb_need_update(nilfs)) {
 			set_nilfs_discontinued(nilfs);
+			nilfs_ifile_next_inode_reset(ifile);
+		}
 	}
 	goto loop;
 
