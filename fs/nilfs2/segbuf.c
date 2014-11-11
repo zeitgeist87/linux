@@ -59,6 +59,7 @@ struct nilfs_segment_buffer *nilfs_segbuf_new(struct super_block *sb)
 	segbuf->sb_super_root = NULL;
 	segbuf->sb_nlive_blks_added = 0;
 	segbuf->sb_nlive_blks_diff = 0;
+	segbuf->sb_nsnapshot_blks = 0;
 
 	init_completion(&segbuf->sb_bio_event);
 	atomic_set(&segbuf->sb_err, 0);

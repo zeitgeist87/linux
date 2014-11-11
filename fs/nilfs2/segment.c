@@ -1381,6 +1381,7 @@ static void nilfs_segctor_update_segusage(struct nilfs_sc_info *sci,
 			(segbuf->sb_pseg_start - segbuf->sb_fseg_start);
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 						     live_blocks,
+						     segbuf->sb_nsnapshot_blks,
 						     sci->sc_seg_ctime);
 		WARN_ON(ret); /* always succeed because the segusage is dirty */
 
@@ -1405,7 +1406,7 @@ static void nilfs_cancel_segusage(struct list_head *logs,
 	segbuf = NILFS_FIRST_SEGBUF(logs);
 	ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
 					     segbuf->sb_pseg_start -
-					     segbuf->sb_fseg_start, 0);
+					     segbuf->sb_fseg_start, 0, 0);
 	WARN_ON(ret); /* always succeed because the segusage is dirty */
 
 	if (nilfs_feature_track_live_blks(nilfs))
@@ -1416,7 +1417,7 @@ static void nilfs_cancel_segusage(struct list_head *logs,
 
 	list_for_each_entry_continue(segbuf, logs, sb_list) {
 		ret = nilfs_sufile_set_segment_usage(sufile, segbuf->sb_segnum,
-						     0, 0);
+						     0, 0, 0);
 		WARN_ON(ret); /* always succeed */
 	}
 }
@@ -1521,6 +1522,8 @@ static void nilfs_segctor_dec_nlive_blks_gc(struct inode *dat,
 
 	if (!buffer_nilfs_snapshot(bh) && isreclaimable)
 		segbuf->sb_nlive_blks_diff--;
+	if (buffer_nilfs_snapshot(bh))
+		segbuf->sb_nsnapshot_blks++;
 }
 
 /**

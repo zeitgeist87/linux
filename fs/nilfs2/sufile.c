@@ -468,7 +468,7 @@ void nilfs_sufile_do_scrap(struct inode *sufile, __u64 *data,
 	su->su_flags = cpu_to_le32(1UL << NILFS_SEGMENT_USAGE_DIRTY);
 	if (nilfs_sufile_ext_supported(sufile)) {
 		su->su_nlive_blks = cpu_to_le32(0);
-		su->su_pad = cpu_to_le32(0);
+		su->su_nsnapshot_blks = cpu_to_le32(0);
 		su->su_nlive_lastmod = cpu_to_le64(0);
 	}
 	kunmap_atomic(kaddr);
@@ -538,7 +538,8 @@ int nilfs_sufile_mark_dirty(struct inode *sufile, __u64 segnum)
  * @modtime: modification time (option)
  */
 int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
-				   unsigned long nblocks, time_t modtime)
+				   unsigned long nblocks, __u32 nsnapshot_blks,
+				   time_t modtime)
 {
 	struct buffer_head *bh;
 	struct nilfs_segment_usage *su;
@@ -556,9 +557,18 @@ int nilfs_sufile_set_segment_usage(struct inode *sufile, __u64 segnum,
 	if (modtime)
 		su->su_lastmod = cpu_to_le64(modtime);
 	su->su_nblocks = cpu_to_le32(nblocks);
-	if (nilfs_sufile_ext_supported(sufile) &&
-	    nblocks < le32_to_cpu(su->su_nlive_blks))
-		su->su_nlive_blks = su->su_nblocks;
+	if (nilfs_sufile_ext_supported(sufile)) {
+		if (nblocks < le32_to_cpu(su->su_nlive_blks))
+			su->su_nlive_blks = su->su_nblocks;
+
+		nsnapshot_blks += le32_to_cpu(su->su_nsnapshot_blks);
+
+		if (nblocks < nsnapshot_blks)
+			nsnapshot_blks = nblocks;
+
+		su->su_nsnapshot_blks = cpu_to_le32(nsnapshot_blks);
+	}
+
 	kunmap_atomic(kaddr);
 
 	mark_buffer_dirty(bh);
@@ -891,7 +901,7 @@ ssize_t nilfs_sufile_get_suinfo(struct inode *sufile, __u64 segnum, void *buf,
 
 			if (sisz >= NILFS_EXT_SUINFO_SIZE) {
 				si->sui_nlive_blks = nlb;
-				si->sui_pad = 0;
+				si->sui_nsnapshot_blks = 0;
 				si->sui_nlive_lastmod = lm;
 			}
 		}
@@ -939,6 +949,7 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 	int ret = 0;
 	bool sup_ext = (supsz >= NILFS_EXT_SUINFO_UPDATE_SIZE);
 	bool su_ext = nilfs_sufile_ext_supported(sufile);
+	bool supsu_ext = sup_ext && su_ext;
 
 	if (unlikely(nsup == 0))
 		return ret;
@@ -952,6 +963,10 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 				nilfs->ns_blocks_per_segment)
 			|| (nilfs_suinfo_update_nlive_blks(sup) && sup_ext &&
 				sup->sup_sui.sui_nlive_blks >
+				nilfs->ns_blocks_per_segment)
+			|| (nilfs_suinfo_update_nsnapshot_blks(sup) &&
+				sup_ext &&
+				sup->sup_sui.sui_nsnapshot_blks >
 				nilfs->ns_blocks_per_segment))
 			return -EINVAL;
 	}
@@ -979,11 +994,15 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
 		if (nilfs_suinfo_update_nblocks(sup))
 			su->su_nblocks = cpu_to_le32(sup->sup_sui.sui_nblocks);
 
-		if (nilfs_suinfo_update_nlive_blks(sup) && sup_ext && su_ext)
+		if (nilfs_suinfo_update_nlive_blks(sup) && supsu_ext)
 			su->su_nlive_blks =
 				cpu_to_le32(sup->sup_sui.sui_nlive_blks);
 
-		if (nilfs_suinfo_update_nlive_lastmod(sup) && sup_ext && su_ext)
+		if (nilfs_suinfo_update_nsnapshot_blks(sup) && supsu_ext)
+			su->su_nsnapshot_blks =
+				cpu_to_le32(sup->sup_sui.sui_nsnapshot_blks);
+
+		if (nilfs_suinfo_update_nlive_lastmod(sup) && supsu_ext)
 			su->su_nlive_lastmod =
 				cpu_to_le64(sup->sup_sui.sui_nlive_lastmod);
 
@@ -1045,6 +1064,85 @@ ssize_t nilfs_sufile_set_suinfo(struct inode *sufile, void *buf,
  out_header:
 	put_bh(header_bh);
  out_sem:
+	up_write(&NILFS_MDT(sufile)->mi_sem);
+	return ret;
+}
+
+/**
+ * nilfs_sufile_fix_starving_segs - fix potentially starving segments
+ * @sufile: inode of segment usage file
+ *
+ * Description: Scans for segments, which are potentially starving and
+ * reduces the number of live blocks to less than half of the maximum
+ * number of blocks in a segment. This way the segment is more likely to be
+ * chosen by the GC. A segment is marked as potentially starving, if more
+ * than half of the blocks it contains are protected by snapshots.
+ *
+ * Return Value: On success, 0 is returned and on error, one of the
+ * following negative error codes is returned.
+ *
+ * %-EIO - I/O error.
+ *
+ * %-ENOMEM - Insufficient amount of memory available.
+ */
+int nilfs_sufile_fix_starving_segs(struct inode *sufile)
+{
+	struct buffer_head *su_bh;
+	struct nilfs_segment_usage *su;
+	size_t n, i, susz = NILFS_MDT(sufile)->mi_entry_size;
+	struct the_nilfs *nilfs = sufile->i_sb->s_fs_info;
+	void *kaddr;
+	unsigned long nsegs, segusages_per_block;
+	__u32 max_segblks = nilfs->ns_blocks_per_segment / 2;
+	__u64 segnum = 0;
+	int ret = 0, blkdirty, dirty = 0;
+
+	down_write(&NILFS_MDT(sufile)->mi_sem);
+
+	segusages_per_block = nilfs_sufile_segment_usages_per_block(sufile);
+	nsegs = nilfs_sufile_get_nsegments(sufile);
+
+	while (segnum < nsegs) {
+		n = nilfs_sufile_segment_usages_in_block(sufile, segnum,
+							 nsegs - 1);
+
+		ret = nilfs_sufile_get_segment_usage_block(sufile, segnum,
+							   0, &su_bh);
+		if (ret < 0) {
+			if (ret != -ENOENT)
+				goto out;
+			/* hole */
+			segnum += n;
+			continue;
+		}
+
+		kaddr = kmap_atomic(su_bh->b_page);
+		su = nilfs_sufile_block_get_segment_usage(sufile, segnum,
+							  su_bh, kaddr);
+		blkdirty = 0;
+		for (i = 0; i < n; ++i, ++segnum, su = (void *)su + susz) {
+			if (le32_to_cpu(su->su_nsnapshot_blks) <= max_segblks)
+				continue;
+
+			if (su->su_nlive_blks <= max_segblks)
+				continue;
+
+			su->su_nlive_blks = max_segblks;
+			blkdirty = 1;
+		}
+
+		kunmap_atomic(kaddr);
+		if (blkdirty) {
+			mark_buffer_dirty(su_bh);
+			dirty = 1;
+		}
+		put_bh(su_bh);
+	}
+
+out:
+	if (dirty)
+		nilfs_mdt_mark_dirty(sufile);
+
 	up_write(&NILFS_MDT(sufile)->mi_sem);
 	return ret;
 }
